@@ -82,8 +82,23 @@ function collectFiles(dir, prefix = "") {
   return result.sort();
 }
 
-fs.rmSync(OUT, { recursive: true, force: true });
-fs.rmSync(ZIP, { force: true });
+try {
+  fs.rmSync(OUT, {
+    recursive: true,
+    force: true,
+    maxRetries: 6,
+    retryDelay: 250,
+  });
+  fs.rmSync(ZIP, { force: true, maxRetries: 6, retryDelay: 250 });
+} catch (error) {
+  if (error?.code === "EPERM" || error?.code === "EBUSY") {
+    throw new Error(
+      "Cannot replace the existing portable release because Windows is using files inside it. " +
+      "Close any running PirateLegend portable instance and try the build again."
+    );
+  }
+  throw error;
+}
 fs.mkdirSync(path.join(OUT, "runtime"), { recursive: true });
 
 copyDir("src");
