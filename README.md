@@ -80,10 +80,17 @@ or run:
 npm start
 ```
 
-Then open:
+The launcher first checks `http://127.0.0.1:3210/api/health`:
 
-```
-http://127.0.0.1:3210
+- If PirateLegend is already running on port 3210, it reuses that server instead of starting a second copy. This avoids `EADDRINUSE` when `start.bat` is opened twice.
+- If port 3210 is occupied by another application and the PirateLegend health endpoint does not respond, the launcher reports a real port conflict.
+- If the port is free, it starts the server normally.
+- The launcher opens `http://127.0.0.1:3210` in the default browser after startup/reuse.
+
+For direct server-only debugging without launcher reuse logic:
+
+```powershell
+npm run server
 ```
 
 The server binds only to `127.0.0.1`.
@@ -97,6 +104,18 @@ http://127.0.0.1:3210/api/health
 It reports uptime, schema version, MAIN/SUB counts, active Chrome sessions, running jobs, state/activity file sizes, activity count, activity-write errors, and startup session-recovery progress.
 
 The local UI includes profile search and filters for MAIN, SUB, attention-required states, and currently open Chrome sessions. Profiles are ordered by MAIN group, with each MAIN's SUB profiles directly after it. Each profile card shows its latest activity time and disables actions that are not valid for the current state. The dashboard also shows the current number of open Chrome profiles and provides **Close idle Chrome** to close managed Chrome windows that are not running a job.
+
+### Account Setup
+
+The dedicated **Account Setup** panel is the primary place to configure accounts:
+
+- **+ Add MAIN** creates a MAIN profile with the role locked to MAIN during setup.
+- Every MAIN is shown as its own group with Chrome state, referral readiness, and SUB count.
+- **+ Add SUB** on a MAIN group opens the SUB setup form with that MAIN already selected.
+- The global **+ Add SUB** action lets you choose from existing MAIN profiles.
+- SUB rows appear directly inside their parent MAIN group with quick **Edit** and **Open** actions.
+- SUB profiles that lose their MAIN are shown in an **Unassigned SUB** warning group so they can be reassigned instead of disappearing.
+- Account creation/registration on the Pirate Legend website remains manual; this setup UI manages the local Chrome profiles and MAIN → SUB relationship.
 
 ### Configuration backup / restore
 

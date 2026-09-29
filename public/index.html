@@ -53,6 +53,38 @@
     .btn.blue { background:#172a43;border-color:#294a74;color:#9cc7ff; }
     .btn.danger { color:#ff9898;background:#30191d;border-color:#5f2a32; }
     .btn.small { padding:6px 9px;font-size:12px;border-radius:7px; }
+    .setup-panel {margin-bottom:18px;}
+    .setup-head {display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:17px 18px;border-bottom:1px solid var(--line);}
+    .setup-actions {display:flex;gap:8px;flex-wrap:wrap;}
+    .setup-body {padding:14px;}
+    .setup-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;}
+    .main-group {
+      border:1px solid #3b3528;border-radius:12px;background:linear-gradient(145deg,#171a20,#15130f);
+      overflow:hidden;
+    }
+    .main-group.attention {border-color:#5b3437;}
+    .main-group-head {display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 14px 12px;}
+    .main-group-title {display:flex;align-items:center;gap:8px;font-weight:800;font-size:15px;}
+    .main-group-actions {display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+    .setup-progress {display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 14px 12px;}
+    .setup-step {padding:7px 8px;border:1px solid #2d3544;border-radius:8px;background:#10151d;}
+    .setup-step .k {font-size:10px;color:#738097;text-transform:uppercase;letter-spacing:.06em;}
+    .setup-step .v {font-size:11px;font-weight:750;margin-top:2px;color:#c9d2df;}
+    .setup-step.ok .v {color:#82dca9;}
+    .setup-step.warn .v {color:#f0c773;}
+    .setup-step.bad .v {color:#ff9898;}
+    .sub-list {border-top:1px solid #2b2d31;padding:10px 14px 13px;display:grid;gap:6px;}
+    .sub-row {
+      display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;
+      padding:7px 8px;border-radius:8px;background:#111722;border:1px solid #252e3d;
+    }
+    .sub-row .sub-name {font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .sub-state {font-size:10px;color:#8e9aaf;}
+    .sub-state.open {color:#82dca9;}
+    .sub-empty {padding:10px 2px;color:#69758a;font-size:12px;}
+    .setup-empty {padding:30px 18px;text-align:center;border:1px dashed #3b4658;border-radius:10px;color:#7e899b;}
+    .setup-empty strong {display:block;color:#d6dde8;margin-bottom:5px;}
+    .modal-role-hint {font-size:11px;color:#77849a;margin-top:-5px;}
     .summary { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:18px; }
     .metric {
       border:1px solid var(--line);background:linear-gradient(145deg,var(--panel),#10151e);
@@ -122,7 +154,7 @@
     .notice{padding:10px 12px;border:1px solid #4b3d20;background:#261f12;border-radius:9px;color:#d9bd80;font-size:12px;margin-bottom:14px;}
     .error{color:#ff8d8d;font-size:12px;min-height:18px}
     @media(max-width:1050px){.layout{grid-template-columns:1fr}.account{grid-template-columns:1fr 1fr}.actions{grid-column:1/-1;justify-content:flex-start}.summary{grid-template-columns:1fr 1fr}}
-    @media(max-width:760px){.panel-head{align-items:flex-start;flex-direction:column}.toolbar{width:100%;justify-content:flex-start}.toolbar input{width:min(100%,320px)}}
+    @media(max-width:760px){.panel-head,.setup-head{align-items:flex-start;flex-direction:column}.toolbar,.setup-actions{width:100%;justify-content:flex-start}.toolbar input{width:min(100%,320px)}}
     @media(max-width:640px){.app{padding:14px}.topbar{flex-direction:column}.top-actions{width:100%;justify-content:flex-start}.summary{grid-template-columns:1fr 1fr}.account{grid-template-columns:1fr}.actions{grid-column:auto}}
     @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}.btn{transition:none}}
   </style>
@@ -142,10 +174,25 @@
         <button class="btn" id="closeIdleBtn">Close idle Chrome</button>
         <button class="btn" id="exportBtn">Export config</button>
         <button class="btn" id="restoreBtn">Restore config</button>
-        <button class="btn primary" id="addBtn">+ Add profile</button>
         <input id="restoreFile" type="file" accept="application/json,.json" hidden />
       </div>
     </div>
+
+    <section class="panel setup-panel">
+      <div class="setup-head">
+        <div>
+          <div class="panel-title">Account Setup</div>
+          <div class="subtle">Thiết lập MAIN trước, sau đó gán các SUB trực tiếp vào MAIN tương ứng.</div>
+        </div>
+        <div class="setup-actions">
+          <button class="btn primary" id="setupAddMainBtn">+ Add MAIN</button>
+          <button class="btn blue" id="setupAddSubBtn">+ Add SUB</button>
+        </div>
+      </div>
+      <div class="setup-body">
+        <div class="setup-grid" id="setupGroups"></div>
+      </div>
+    </section>
 
     <div class="summary">
       <div class="metric"><div class="label">Total profiles</div><div class="value" id="mTotal">0</div></div>
@@ -330,6 +377,96 @@
     return "";
   }
 
+  function setupStep(label, value, tone = "") {
+    return '<div class="setup-step '+tone+'"><div class="k">'+esc(label)+'</div><div class="v">'+esc(value)+'</div></div>';
+  }
+
+  function renderSetupGroups(accounts) {
+    const root = $("#setupGroups");
+    const mains = [];
+    const subsByMain = new Map();
+
+    for (const account of accounts) {
+      if (account.role === "MAIN") {
+        mains.push(account);
+      } else if (account.role === "SUB" && account.parentMainId) {
+        if (!subsByMain.has(account.parentMainId)) subsByMain.set(account.parentMainId, []);
+        subsByMain.get(account.parentMainId).push(account);
+      }
+    }
+
+    mains.sort((a,b) => String(a.label).localeCompare(String(b.label), "vi"));
+    for (const subs of subsByMain.values()) {
+      subs.sort((a,b) => String(a.label).localeCompare(String(b.label), "vi"));
+    }
+
+    const unassigned = accounts
+      .filter(account => account.role === "SUB" && !account.parentMainId)
+      .sort((a,b) => String(a.label).localeCompare(String(b.label), "vi"));
+
+    const unassignedHtml = unassigned.length
+      ? '<article class="main-group attention">' +
+          '<div class="main-group-head"><div><div class="main-group-title"><span class="tag sub">SUB</span><span>Unassigned SUB</span></div>' +
+          '<div class="muted">Cần gán lại MAIN</div></div></div>' +
+          '<div class="sub-list">' +
+            unassigned.map(sub => '<div class="sub-row">' +
+              '<div><div class="sub-name">'+esc(sub.label)+'</div><div class="sub-state">'+esc(sub.status)+'</div></div>' +
+              '<button class="btn small" data-setup-act="edit-sub" data-id="'+sub.id+'"'+(sub.running ? " disabled" : "")+'>Assign MAIN</button>' +
+              '<button class="btn small" data-setup-act="open-sub" data-id="'+sub.id+'">Open</button>' +
+            '</div>').join("") +
+          '</div>' +
+        '</article>'
+      : "";
+
+    if (!mains.length) {
+      root.innerHTML = '<div class="setup-empty"><strong>Chưa có MAIN account</strong>Tạo MAIN đầu tiên, sau đó thêm các SUB vào group đó.</div>' + unassignedHtml;
+      return;
+    }
+
+    const groupsHtml = mains.map(main => {
+      const subs = subsByMain.get(main.id) || [];
+      const busy = main.job?.state === "RUNNING";
+      const mainAttention = needsAttention(main) || subs.some(needsAttention);
+      const referralValue = main.referralUrl ? "Ready" : "Chưa có";
+      const referralTone = main.referralUrl ? "ok" : "warn";
+      const sessionValue = main.running ? "OPEN" : "CLOSED";
+      const sessionTone = main.running ? "ok" : "";
+      const subValue = subs.length ? String(subs.length) + " SUB" : "Chưa có SUB";
+      const subTone = subs.length ? "ok" : "warn";
+
+      const subHtml = subs.length ? subs.map(sub => {
+        const subBusy = sub.job?.state === "RUNNING";
+        const subStatus = subBusy ? sub.job.name + " · RUNNING" : sub.status;
+        return '<div class="sub-row">' +
+          '<div><div class="sub-name">'+esc(sub.label)+'</div><div class="sub-state '+(sub.running ? "open" : "")+'">'+
+            esc(subStatus)+' · '+(sub.running ? "Chrome OPEN" : "Chrome closed")+'</div></div>' +
+          '<button class="btn small" data-setup-act="edit-sub" data-id="'+sub.id+'"'+(sub.running || subBusy ? " disabled" : "")+'>Edit</button>' +
+          '<button class="btn small" data-setup-act="open-sub" data-id="'+sub.id+'"'+(subBusy ? " disabled" : "")+'>Open</button>' +
+        '</div>';
+      }).join("") : '<div class="sub-empty">Chưa có SUB. Bấm <b>+ Add SUB</b> để gán account phụ vào MAIN này.</div>';
+
+      return '<article class="main-group '+(mainAttention ? "attention" : "")+'">' +
+        '<div class="main-group-head">' +
+          '<div><div class="main-group-title"><span class="tag main">MAIN</span><span>'+esc(main.label)+'</span></div>' +
+          '<div class="muted">'+esc(main.status)+(busy ? " · "+esc(main.job.name) : "")+'</div></div>' +
+          '<div class="main-group-actions">' +
+            '<button class="btn small blue" data-setup-act="add-sub" data-id="'+main.id+'">+ Add SUB</button>' +
+            '<button class="btn small" data-setup-act="edit-main" data-id="'+main.id+'"'+(main.running || busy ? " disabled" : "")+'>Edit MAIN</button>' +
+            '<button class="btn small" data-setup-act="open-main" data-id="'+main.id+'"'+(busy ? " disabled" : "")+'>Open</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="setup-progress">' +
+          setupStep("Chrome", sessionValue, sessionTone) +
+          setupStep("Referral", referralValue, referralTone) +
+          setupStep("SUB", subValue, subTone) +
+        '</div>' +
+        '<div class="sub-list">'+subHtml+'</div>' +
+      '</article>';
+    }).join("");
+
+    root.innerHTML = groupsHtml + unassignedHtml;
+  }
+
   function render() {
     const accounts = state.accounts || [];
     rebuildIndexes(accounts, state.logs || []);
@@ -338,12 +475,13 @@
     $("#mReferral").textContent = accounts.filter(a => a.role === "MAIN" && a.referralUrl).length;
     $("#mRunning").textContent = accounts.filter(a => a.job?.state === "RUNNING").length;
     $("#mOpen").textContent = accounts.filter(a => a.running).length;
+    renderSetupGroups(accounts);
 
     const root = $("#accounts");
     const matchedAccounts = filteredAccounts(accounts);
     const visibleAccounts = matchedAccounts.slice(0, PROFILE_RENDER_LIMIT);
     if (!accounts.length) {
-      root.innerHTML = '<div class="empty">Chưa có profile. Bấm <b>Add profile</b> để bắt đầu.</div>';
+      root.innerHTML = '<div class="empty">Chưa có profile. Dùng <b>Account Setup</b> phía trên để tạo MAIN và SUB.</div>';
     } else if (!visibleAccounts.length) {
       root.innerHTML = '<div class="empty">Không có profile phù hợp với bộ lọc hiện tại.</div>';
     } else {
@@ -456,21 +594,31 @@
       mains.map(a => '<option value="'+a.id+'" '+(a.id===selected?'selected':'')+'>'+esc(a.label)+'</option>').join("");
   }
 
-  function openModal(account = null) {
-    $("#modalTitle").textContent = account ? "Edit profile" : "Add profile";
+  function openModal(account = null, preset = {}) {
+    const role = account?.role || preset.role || "MAIN";
+    const parentMainId = account?.parentMainId || preset.parentMainId || "";
+    const lockedRole = Boolean(preset.lockRole && !account);
+
+    $("#modalTitle").textContent = account
+      ? "Edit " + account.role + " profile"
+      : role === "SUB" ? "Add SUB account" : "Add MAIN account";
     $("#editId").value = account?.id || "";
     $("#label").value = account?.label || "";
-    $("#role").value = account?.role || "MAIN";
+    $("#role").value = role;
+    $("#role").disabled = lockedRole;
     $("#profilePath").value = account?.profilePath || "";
     $("#referralUrl").value = account?.referralUrl || "";
-    fillMainOptions(account?.parentMainId || "");
+    fillMainOptions(parentMainId);
     $("#formError").textContent = "";
     syncRoleFields();
     $("#modalWrap").classList.add("open");
     setTimeout(() => $("#label").focus(), 50);
   }
 
-  function closeModal() { $("#modalWrap").classList.remove("open"); }
+  function closeModal() {
+    $("#modalWrap").classList.remove("open");
+    $("#role").disabled = false;
+  }
 
   function syncRoleFields() {
     const isSub = $("#role").value === "SUB";
@@ -538,7 +686,15 @@
     }
   }
 
-  $("#addBtn").addEventListener("click", () => openModal());
+  $("#setupAddMainBtn").addEventListener("click", () => openModal(null, {role:"MAIN", lockRole:true}));
+  $("#setupAddSubBtn").addEventListener("click", () => {
+    const mains = state.accounts.filter(account => account.role === "MAIN");
+    if (!mains.length) {
+      alert("Hãy tạo ít nhất một MAIN trước khi thêm SUB.");
+      return;
+    }
+    openModal(null, {role:"SUB", parentMainId:mains[0].id, lockRole:true});
+  });
   $("#closeIdleBtn").addEventListener("click", closeIdleChrome);
   $("#exportBtn").addEventListener("click", exportConfig);
   $("#restoreBtn").addEventListener("click", () => $("#restoreFile").click());
@@ -575,6 +731,35 @@
       closeModal();
       await refresh();
     } catch (error) { $("#formError").textContent = error.message; }
+  });
+
+  $("#setupGroups").addEventListener("click", async e => {
+    const btn = e.target.closest("button[data-setup-act]");
+    if (!btn) return;
+
+    const id = btn.dataset.id;
+    const action = btn.dataset.setupAct;
+    const account = state.accounts.find(item => item.id === id);
+    if (!account) return;
+
+    if (action === "add-sub") {
+      return openModal(null, {role:"SUB", parentMainId:account.id, lockRole:true});
+    }
+    if (action === "edit-main" || action === "edit-sub") {
+      return openModal(account);
+    }
+    if (action === "open-main" || action === "open-sub") {
+      btn.disabled = true;
+      try {
+        await api("/api/accounts/" + encodeURIComponent(account.id) + "/open", {method:"POST", body:"{}"});
+        await refresh();
+      } catch (error) {
+        alert(error.message);
+        await refresh();
+      } finally {
+        btn.disabled = false;
+      }
+    }
   });
 
   $("#accounts").addEventListener("click", async e => {

@@ -12,12 +12,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo [PirateLegend] Starting local tool at http://127.0.0.1:3210
-echo [PirateLegend] Press Ctrl+C in this window to stop the server.
-node src\server.js
+node scripts\start-local.js
 
 if errorlevel 1 (
   echo.
-  echo [PirateLegend] Server stopped with an error.
+  echo [PirateLegend] Launcher stopped with an error.
   pause
 )
