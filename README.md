@@ -96,7 +96,19 @@ http://127.0.0.1:3210/api/health
 
 It reports uptime, schema version, MAIN/SUB counts, active Chrome sessions, and running jobs.
 
-The local UI includes profile search and filters for MAIN, SUB, attention-required states, and currently open Chrome sessions. Each profile card shows its latest activity time and disables actions that are not valid for the current state.
+The local UI includes profile search and filters for MAIN, SUB, attention-required states, and currently open Chrome sessions. Profiles are ordered by MAIN group, with each MAIN's SUB profiles directly after it. Each profile card shows its latest activity time and disables actions that are not valid for the current state.
+
+### Configuration backup / restore
+
+Use **Export config** to download a JSON backup containing profile configuration and MAIN → SUB mapping. The export contains profile IDs, labels, roles, explicit Chrome profile paths, parent mapping, and stored referral URLs. It does **not** export Chrome cookies/session data.
+
+Use **Restore config** to replace the current profile configuration from one of these JSON files. Restore is blocked while jobs are running or managed Chrome profiles are open. Before replacing the active configuration, the tool automatically saves the current state as:
+
+```
+data\state.before-restore-<timestamp>.json
+```
+
+The 10 newest restore-safety backups are retained automatically. Restored accounts start with clean runtime status/turn counters while retaining IDs and mapping, so auto-managed Chrome profile directories continue to match the restored account IDs.
 
 ## Validation
 

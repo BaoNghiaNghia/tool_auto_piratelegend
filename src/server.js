@@ -35,18 +35,35 @@ function json(res, status, body) {
   res.end(data);
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 5_000_000) {
   return new Promise((resolve, reject) => {
     let raw = "";
+    let size = 0;
+    let settled = false;
+
     req.on("data", (chunk) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        settled = true;
+        reject(new Error("Request body is too large"));
+        return;
+      }
       raw += chunk;
-      if (raw.length > 1_000_000) req.destroy();
     });
+
     req.on("end", () => {
+      if (settled) return;
+      settled = true;
       if (!raw) return resolve({});
       try { resolve(JSON.parse(raw)); } catch { reject(new Error("Invalid JSON body")); }
     });
-    req.on("error", reject);
+
+    req.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
   });
 }
 
@@ -134,6 +151,20 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname === "/api/state") {
       return json(res, 200, stateView());
+    }
+
+    if (req.method === "GET" && pathname === "/api/config/export") {
+      return json(res, 200, store.exportConfig());
+    }
+
+    if (req.method === "POST" && pathname === "/api/config/restore") {
+      const runningJobs = [...jobs.values()].some((job) => job.state === "RUNNING");
+      if (runningJobs) return json(res, 409, { error: "Wait for running jobs to finish before restoring a backup" });
+      if (chrome.sessions.size > 0) return json(res, 409, { error: "Close all managed Chrome profiles before restoring a backup" });
+      const body = await readBody(req);
+      const result = store.restoreConfig(body);
+      jobs.clear();
+      return json(res, 200, { ok: true, ...result });
     }
 
     if (req.method === "POST" && pathname === "/api/accounts") {

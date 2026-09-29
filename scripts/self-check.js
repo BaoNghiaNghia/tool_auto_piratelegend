@@ -73,6 +73,51 @@ try {
   assert(reopened.snapshot().schemaVersion === 1, "State schema version was not restored");
   assert(reopened.getAccount(main2.id)?.label === "Main test 2", "Persisted account could not be reopened");
 
+  const exported = reopened.exportConfig();
+  assert(exported.format === "piratelegend-profile-config", "Config export format is invalid");
+  assert(exported.version === 1, "Config export version is invalid");
+  assert(exported.accounts.length === 2, "Config export account count is invalid");
+
+  const restoreRoot = path.join(temp, "restore");
+  const restoreStore = new Store(restoreRoot);
+  restoreStore.addAccount({ label: "Old config", role: "MAIN" });
+  const restoreResult = restoreStore.restoreConfig(exported);
+  assert(restoreResult.mainCount === 1 && restoreResult.subCount === 1, "Config restore counts are invalid");
+  assert(restoreStore.getAccount(main2.id)?.label === "Main test 2", "MAIN was not restored");
+  assert(restoreStore.getAccount(sub.id)?.parentMainId === main2.id, "SUB mapping was not restored");
+  assert(restoreResult.backupFile, "Restore safety backup was not created");
+  assert(fs.existsSync(path.join(restoreRoot, "data", restoreResult.backupFile)), "Restore safety backup file is missing");
+
+  for (let i = 0; i < 12; i += 1) {
+    fs.writeFileSync(
+      path.join(restoreRoot, "data", `state.before-restore-${1000 + i}.json`),
+      "{}",
+      "utf8"
+    );
+  }
+  restoreStore.restoreConfig(exported);
+  const retainedBackups = fs.readdirSync(path.join(restoreRoot, "data"))
+    .filter(name => /^state\.before-restore-\d+\.json$/.test(name));
+  assert(retainedBackups.length <= 10, "Restore safety backups were not pruned");
+
+  let invalidRestoreRejected = false;
+  try {
+    restoreStore.restoreConfig({
+      format: "piratelegend-profile-config",
+      version: 1,
+      accounts: [{
+        id: "broken-sub",
+        label: "Broken Sub",
+        role: "SUB",
+        parentMainId: "missing-main"
+      }]
+    });
+  } catch {
+    invalidRestoreRejected = true;
+  }
+  assert(invalidRestoreRejected, "Invalid SUB mapping backup was not rejected");
+  assert(restoreStore.getAccount(main2.id)?.label === "Main test 2", "Failed restore mutated the active config");
+
   const legacyRoot = path.join(temp, "legacy");
   fs.mkdirSync(path.join(legacyRoot, "data"), { recursive: true });
   fs.writeFileSync(path.join(legacyRoot, "data", "state.json"), JSON.stringify({

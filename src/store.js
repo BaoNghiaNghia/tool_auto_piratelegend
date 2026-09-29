@@ -120,6 +120,107 @@ class Store {
     return JSON.parse(JSON.stringify(this.state));
   }
 
+  exportConfig() {
+    return {
+      format: "piratelegend-profile-config",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      accounts: this.state.accounts.map((account) => ({
+        id: account.id,
+        label: account.label,
+        role: account.role,
+        profilePath: account.profilePath,
+        parentMainId: account.parentMainId,
+        referralUrl: account.referralUrl,
+      })),
+    };
+  }
+
+  restoreConfig(payload) {
+    if (!payload || payload.format !== "piratelegend-profile-config" || payload.version !== 1) {
+      throw new Error("Unsupported backup format");
+    }
+    if (!Array.isArray(payload.accounts)) throw new Error("Backup accounts must be an array");
+    if (payload.accounts.length > 5000) throw new Error("Backup contains too many accounts");
+
+    const now = new Date().toISOString();
+    const seenIds = new Set();
+    const seenPaths = new Map();
+    const staged = payload.accounts.map((input, index) => {
+      const id = String(input?.id || "").trim() || crypto.randomUUID();
+      if (seenIds.has(id)) throw new Error(`Duplicate account id at backup row ${index + 1}`);
+      seenIds.add(id);
+
+      const role = input?.role === "SUB" ? "SUB" : input?.role === "MAIN" ? "MAIN" : null;
+      if (!role) throw new Error(`Invalid role at backup row ${index + 1}`);
+
+      const label = String(input?.label || "").trim();
+      if (!label) throw new Error(`Missing profile name at backup row ${index + 1}`);
+
+      const profilePath = normalizeProfilePath(input?.profilePath);
+      if (profilePath) {
+        const key = profilePath.toLowerCase();
+        if (seenPaths.has(key)) {
+          throw new Error(`Duplicate Chrome profile path: ${profilePath}`);
+        }
+        seenPaths.set(key, id);
+      }
+
+      const referralUrl = role === "MAIN" ? String(input?.referralUrl || "").trim() : "";
+      if (!isPirateLegendUrl(referralUrl)) {
+        throw new Error(`Invalid referral URL for ${label}`);
+      }
+
+      return {
+        id,
+        label,
+        role,
+        profilePath,
+        parentMainId: role === "SUB" ? String(input?.parentMainId || "").trim() : "",
+        referralUrl,
+        status: "READY",
+        turns: null,
+        lastError: "",
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+
+    const mainIds = new Set(staged.filter((account) => account.role === "MAIN").map((account) => account.id));
+    for (const account of staged) {
+      if (account.role === "SUB" && !mainIds.has(account.parentMainId)) {
+        throw new Error(`SUB ${account.label} references a missing MAIN`);
+      }
+    }
+
+    let backupFile = null;
+    if (fs.existsSync(this.file)) {
+      backupFile = path.join(this.dataDir, `state.before-restore-${Date.now()}.json`);
+      fs.copyFileSync(this.file, backupFile);
+
+      const backups = fs.readdirSync(this.dataDir)
+        .filter((name) => /^state\.before-restore-\d+\.json$/.test(name))
+        .sort()
+        .reverse();
+      for (const oldBackup of backups.slice(10)) {
+        try { fs.rmSync(path.join(this.dataDir, oldBackup), { force: true }); } catch {}
+      }
+    }
+
+    this.state = {
+      schemaVersion: 1,
+      accounts: staged,
+      logs: [],
+    };
+    this.save();
+    return {
+      accountCount: staged.length,
+      mainCount: staged.filter((account) => account.role === "MAIN").length,
+      subCount: staged.filter((account) => account.role === "SUB").length,
+      backupFile: backupFile ? path.basename(backupFile) : null,
+    };
+  }
+
   getAccount(id) {
     return this.state.accounts.find((account) => account.id === id) || null;
   }
