@@ -15,7 +15,25 @@ class ChromeManager {
     this.defaultProfilesDir = path.join(rootDir, "chrome-profiles");
     fs.mkdirSync(this.defaultProfilesDir, { recursive: true });
     this.sessions = new Map();
+    this.revision = 1;
     this.lastLivenessCheckAt = 0;
+    this.livenessPromise = null;
+  }
+
+  #setSession(accountId, session) {
+    const previous = this.sessions.get(accountId);
+    this.sessions.set(accountId, session);
+    if (previous !== session) this.revision += 1;
+    return session;
+  }
+
+  #deleteSession(accountId, expected = null) {
+    const current = this.sessions.get(accountId);
+    if (!current) return false;
+    if (expected && current !== expected) return false;
+    this.sessions.delete(accountId);
+    this.revision += 1;
+    return true;
   }
 
   resolveProfilePath(account) {
@@ -62,7 +80,7 @@ class ChromeManager {
         child: null,
         profilePath,
       };
-      this.sessions.set(account.id, session);
+      this.#setSession(account.id, session);
       return session;
     } catch {
       return null;
@@ -76,7 +94,7 @@ class ChromeManager {
         await this.navigate(account.id, url);
         return existing;
       } catch {
-        this.sessions.delete(account.id);
+        this.#deleteSession(account.id, existing);
       }
     }
 
@@ -125,7 +143,7 @@ class ChromeManager {
 
     child.once("exit", () => {
       const current = this.sessions.get(account.id);
-      if (current?.child === child) this.sessions.delete(account.id);
+      if (current?.child === child) this.#deleteSession(account.id, current);
     });
 
     return session;
@@ -163,7 +181,7 @@ class ChromeManager {
         signal: AbortSignal.timeout(1500),
       });
     } catch {
-      this.sessions.delete(accountId);
+      this.#deleteSession(accountId, session);
       throw new Error("Chrome DevTools is no longer reachable");
     }
     if (!response.ok) throw new Error("Cannot query Chrome targets");
@@ -235,27 +253,39 @@ class ChromeManager {
     } catch {
       try { session.child?.kill(); } catch {}
     }
-    this.sessions.delete(accountId);
+    this.#deleteSession(accountId, session);
     return true;
   }
 
-  async refreshLiveness(minIntervalMs = 1200) {
+  async refreshLiveness(minIntervalMs = 5000, batchSize = 12) {
+    if (this.livenessPromise) return this.livenessPromise;
+
     const now = Date.now();
     if (now - this.lastLivenessCheckAt < minIntervalMs) return;
     this.lastLivenessCheckAt = now;
 
-    const entries = [...this.sessions.entries()];
-    await Promise.all(entries.map(async ([accountId, session]) => {
-      try {
-        const response = await fetch(`http://127.0.0.1:${session.port}/json/version`, {
-          signal: AbortSignal.timeout(700),
-        });
-        if (!response.ok) throw new Error("DevTools unavailable");
-      } catch {
-        const current = this.sessions.get(accountId);
-        if (current === session) this.sessions.delete(accountId);
+    this.livenessPromise = (async () => {
+      const entries = [...this.sessions.entries()];
+      for (let offset = 0; offset < entries.length; offset += batchSize) {
+        const batch = entries.slice(offset, offset + batchSize);
+        await Promise.all(batch.map(async ([accountId, session]) => {
+          try {
+            const response = await fetch(`http://127.0.0.1:${session.port}/json/version`, {
+              signal: AbortSignal.timeout(700),
+            });
+            if (!response.ok) throw new Error("DevTools unavailable");
+          } catch {
+            this.#deleteSession(accountId, session);
+          }
+        }));
       }
-    }));
+    })();
+
+    try {
+      await this.livenessPromise;
+    } finally {
+      this.livenessPromise = null;
+    }
   }
 
   detachForServerShutdown() {

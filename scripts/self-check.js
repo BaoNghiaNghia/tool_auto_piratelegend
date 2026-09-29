@@ -69,9 +69,44 @@ try {
   }
   assert(duplicateRejected, "Duplicate Chrome profile path was not rejected");
 
+  const stateOnDisk = JSON.parse(fs.readFileSync(path.join(temp, "data", "state.json"), "utf8"));
+  assert(!Object.prototype.hasOwnProperty.call(stateOnDisk, "logs"), "Activity logs should not be embedded in state.json");
+  assert(fs.existsSync(path.join(temp, "data", "activity.jsonl")), "Activity log file was not created");
+
   const reopened = new Store(temp);
   assert(reopened.snapshot().schemaVersion === 1, "State schema version was not restored");
   assert(reopened.getAccount(main2.id)?.label === "Main test 2", "Persisted account could not be reopened");
+  assert(reopened.snapshot().logs.length > 0, "Activity logs were not restored from activity.jsonl");
+
+  const revisionBeforeLog = reopened.revision;
+  const stateBeforeActivity = fs.readFileSync(path.join(temp, "data", "state.json"), "utf8");
+  reopened.log(main2.id, "INFO", "Activity persistence check");
+  const stateAfterActivity = fs.readFileSync(path.join(temp, "data", "state.json"), "utf8");
+  assert(reopened.revision > revisionBeforeLog, "Store revision did not advance after activity log");
+  assert(stateAfterActivity === stateBeforeActivity, "Activity logging rewrote state.json");
+  const reopenedAfterLog = new Store(temp);
+  assert(
+    reopenedAfterLog.snapshot().logs.some(log => log.message === "Activity persistence check"),
+    "Appended activity did not survive Store restart"
+  );
+
+  const activityStats = reopened.storageStats();
+  assert(activityStats.activityCount > 0, "Activity count stats are invalid");
+  assert(activityStats.stateFileBytes > 0, "State file size stats are invalid");
+  assert(activityStats.activityFileBytes > 0, "Activity file size stats are invalid");
+
+  const spamRoot = path.join(temp, "activity-spam");
+  const spamStore = new Store(spamRoot);
+  for (let i = 0; i < 620; i += 1) {
+    spamStore.log("spam-account", "INFO", `Spam log ${i}`);
+  }
+  assert(spamStore.snapshot().logs.length === 500, "In-memory activity retention exceeded 500");
+  const spamReloaded = new Store(spamRoot);
+  assert(spamReloaded.snapshot().logs.length === 500, "Activity retention after restart exceeded 500");
+  const activityLines = fs.readFileSync(path.join(spamRoot, "data", "activity.jsonl"), "utf8")
+    .split(/\r?\n/)
+    .filter(Boolean);
+  assert(activityLines.length < 600, "Activity JSONL compaction did not bound the file");
 
   const exported = reopened.exportConfig();
   assert(exported.format === "piratelegend-profile-config", "Config export format is invalid");
@@ -87,6 +122,11 @@ try {
   assert(restoreStore.getAccount(sub.id)?.parentMainId === main2.id, "SUB mapping was not restored");
   assert(restoreResult.backupFile, "Restore safety backup was not created");
   assert(fs.existsSync(path.join(restoreRoot, "data", restoreResult.backupFile)), "Restore safety backup file is missing");
+  assert(restoreResult.activityBackupFile, "Restore activity backup was not created");
+  assert(
+    fs.existsSync(path.join(restoreRoot, "data", restoreResult.activityBackupFile)),
+    "Restore activity backup file is missing"
+  );
 
   for (let i = 0; i < 12; i += 1) {
     fs.writeFileSync(
@@ -94,11 +134,19 @@ try {
       "{}",
       "utf8"
     );
+    fs.writeFileSync(
+      path.join(restoreRoot, "data", `activity.before-restore-${1000 + i}.jsonl`),
+      "{}\n",
+      "utf8"
+    );
   }
   restoreStore.restoreConfig(exported);
   const retainedBackups = fs.readdirSync(path.join(restoreRoot, "data"))
     .filter(name => /^state\.before-restore-\d+\.json$/.test(name));
   assert(retainedBackups.length <= 10, "Restore safety backups were not pruned");
+  const retainedActivityBackups = fs.readdirSync(path.join(restoreRoot, "data"))
+    .filter(name => /^activity\.before-restore-\d+\.jsonl$/.test(name));
+  assert(retainedActivityBackups.length <= 10, "Restore activity backups were not pruned");
 
   let invalidRestoreRejected = false;
   try {
@@ -127,11 +175,22 @@ try {
       role: "SUB",
       parentMainId: "missing-main"
     }],
-    logs: []
+    logs: [{
+      id: "legacy-log",
+      accountId: "legacy-sub",
+      level: "INFO",
+      message: "Legacy activity",
+      meta: null,
+      at: new Date().toISOString()
+    }]
   }), "utf8");
   const legacyStore = new Store(legacyRoot);
   assert(legacyStore.snapshot().schemaVersion === 1, "Legacy state was not migrated");
   assert(legacyStore.getAccount("legacy-sub")?.status === "NEEDS_MAIN", "Legacy orphan SUB was not normalized");
+  assert(legacyStore.snapshot().logs.some(log => log.id === "legacy-log"), "Legacy activity log was not migrated");
+  assert(fs.existsSync(path.join(legacyRoot, "data", "activity.jsonl")), "Legacy activity file was not created");
+  const migratedState = JSON.parse(fs.readFileSync(path.join(legacyRoot, "data", "state.json"), "utf8"));
+  assert(!Object.prototype.hasOwnProperty.call(migratedState, "logs"), "Legacy logs were not removed from state.json");
 
   const corruptRoot = path.join(temp, "corrupt");
   fs.mkdirSync(path.join(corruptRoot, "data"), { recursive: true });
@@ -154,6 +213,7 @@ try {
     child: null,
   });
 
+  const chromeRevisionBefore = chrome.revision;
   const originalFetch = global.fetch;
   global.fetch = async (url) => ({
     ok: String(url).includes(":10001/"),
@@ -165,11 +225,44 @@ try {
   }
   assert(chrome.isRunning("alive"), "Live Chrome session was pruned incorrectly");
   assert(!chrome.isRunning("dead"), "Dead Chrome session was not pruned");
+  assert(chrome.revision > chromeRevisionBefore, "Chrome revision did not advance after pruning a dead session");
 
   chrome.detachForServerShutdown();
   assert(unrefCalls === 1, "Managed Chrome child was not detached on server shutdown");
 
-  console.log("[self-check] Node, UI, storage, migration, Chrome liveness, validation: OK");
+  const batchChrome = new ChromeManager(temp);
+  for (let i = 0; i < 25; i += 1) {
+    batchChrome.sessions.set(`batch-${i}`, {
+      port: 11000 + i,
+      profilePath: path.join(temp, `batch-${i}`),
+      child: null,
+    });
+  }
+
+  let activeFetches = 0;
+  let maxActiveFetches = 0;
+  let totalFetches = 0;
+  const fetchBeforeBatch = global.fetch;
+  global.fetch = async () => {
+    totalFetches += 1;
+    activeFetches += 1;
+    maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+    await new Promise(resolve => setTimeout(resolve, 3));
+    activeFetches -= 1;
+    return { ok: true };
+  };
+  try {
+    await Promise.all([
+      batchChrome.refreshLiveness(0, 5),
+      batchChrome.refreshLiveness(0, 5),
+    ]);
+  } finally {
+    global.fetch = fetchBeforeBatch;
+  }
+  assert(totalFetches === 25, "Overlapping liveness checks were not deduplicated");
+  assert(maxActiveFetches <= 5, "Liveness batch concurrency exceeded the configured batch size");
+
+  console.log("[self-check] Node, UI, storage, activity I/O, Chrome liveness, validation: OK");
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

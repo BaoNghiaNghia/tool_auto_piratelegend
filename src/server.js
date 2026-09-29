@@ -15,6 +15,8 @@ const store = new Store(ROOT);
 const chrome = new ChromeManager(ROOT);
 const pirate = new PirateLegendAutomation(store, chrome);
 const jobs = new Map();
+let jobRevision = 1;
+let sessionRecovery = { running: false, recovered: 0, checked: 0, total: 0 };
 
 function baseHeaders() {
   return {
@@ -33,6 +35,23 @@ function json(res, status, body) {
     "cache-control": "no-store",
   });
   res.end(data);
+}
+
+function mutationOriginAllowed(req) {
+  const fetchSite = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+  if (fetchSite === "cross-site") return false;
+
+  const origin = String(req.headers.origin || "").trim();
+  if (!origin) return true;
+
+  try {
+    const parsed = new URL(origin);
+    const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+    const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+    return parsed.protocol === "http:" && loopback && port === PORT;
+  } catch {
+    return false;
+  }
 }
 
 function readBody(req, maxBytes = 5_000_000) {
@@ -71,12 +90,18 @@ function accountView(account) {
   return { ...account, running: chrome.isRunning(account.id), job: jobs.get(account.id) || null };
 }
 
+function stateRevision() {
+  return `${STARTED_AT}:${store.revision}:${jobRevision}:${chrome.revision}`;
+}
+
 function stateView() {
-  const snapshot = store.snapshot();
+  const snapshot = store.snapshot({ logLimit: 100 });
   return {
+    revision: stateRevision(),
     startedAt: STARTED_AT,
     accounts: snapshot.accounts.map(accountView),
     logs: snapshot.logs,
+    system: store.storageStats(),
   };
 }
 
@@ -89,16 +114,19 @@ function startJob(account, name, task) {
   if (existing?.state === "RUNNING") throw new Error(`Account already running job: ${existing.name}`);
   const job = { name, state: "RUNNING", startedAt: new Date().toISOString(), error: "" };
   jobs.set(account.id, job);
+  jobRevision += 1;
 
   Promise.resolve()
     .then(task)
     .then((result) => {
       jobs.set(account.id, { ...job, state: "DONE", result, finishedAt: new Date().toISOString() });
+      jobRevision += 1;
     })
     .catch((error) => {
       store.updateAccount(account.id, { status: "ERROR", lastError: error.message });
       store.log(account.id, "ERROR", error.message);
       jobs.set(account.id, { ...job, state: "ERROR", error: error.message, finishedAt: new Date().toISOString() });
+      jobRevision += 1;
     });
 
   return job;
@@ -129,12 +157,22 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
+    if (["POST", "PATCH", "DELETE"].includes(req.method) && !mutationOriginAllowed(req)) {
+      return json(res, 403, { error: "Cross-origin local API mutation blocked" });
+    }
+
     if (pathname.startsWith("/api/")) {
-      await chrome.refreshLiveness();
+      const passiveRead = req.method === "GET" && (pathname === "/api/state" || pathname === "/api/health");
+      if (passiveRead) {
+        chrome.refreshLiveness(5000).catch(() => {});
+      } else {
+        await chrome.refreshLiveness(0);
+      }
     }
 
     if (req.method === "GET" && pathname === "/api/health") {
-      const snapshot = store.snapshot();
+      const snapshot = store.snapshot({ includeLogs: false });
+      const storage = store.storageStats();
       const runningJobs = [...jobs.values()].filter((job) => job.state === "RUNNING").length;
       return json(res, 200, {
         ok: true,
@@ -146,15 +184,43 @@ const server = http.createServer(async (req, res) => {
         subCount: snapshot.accounts.filter((account) => account.role === "SUB").length,
         chromeSessions: chrome.sessions.size,
         runningJobs,
+        activityCount: storage.activityCount,
+        stateFileBytes: storage.stateFileBytes,
+        activityFileBytes: storage.activityFileBytes,
+        activityWriteError: storage.activityWriteError,
+        sessionRecovery,
       });
     }
 
     if (req.method === "GET" && pathname === "/api/state") {
+      const revision = stateRevision();
+      if (parsed.searchParams.get("revision") === revision) {
+        return json(res, 200, { unchanged: true, revision });
+      }
       return json(res, 200, stateView());
     }
 
     if (req.method === "GET" && pathname === "/api/config/export") {
       return json(res, 200, store.exportConfig());
+    }
+
+    if (req.method === "POST" && pathname === "/api/chrome/close-idle") {
+      const ids = [...chrome.sessions.keys()];
+      let closed = 0;
+      let skippedBusy = 0;
+      const batchSize = 6;
+
+      for (let offset = 0; offset < ids.length; offset += batchSize) {
+        const batch = ids.slice(offset, offset + batchSize);
+        const results = await Promise.all(batch.map(async (id) => {
+          if (isBusy(id)) return "busy";
+          return await chrome.close(id) ? "closed" : "missing";
+        }));
+        closed += results.filter((result) => result === "closed").length;
+        skippedBusy += results.filter((result) => result === "busy").length;
+      }
+
+      return json(res, 200, { ok: true, closed, skippedBusy });
     }
 
     if (req.method === "POST" && pathname === "/api/config/restore") {
@@ -164,6 +230,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const result = store.restoreConfig(body);
       jobs.clear();
+      jobRevision += 1;
       return json(res, 200, { ok: true, ...result });
     }
 
@@ -247,26 +314,48 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-async function recoverExistingChromeSessions() {
-  let recovered = 0;
-  const accounts = store.snapshot().accounts;
-  for (const account of accounts) {
-    try {
-      const session = await chrome.attachIfRunning(account);
-      if (session) recovered += 1;
-    } catch {}
+async function recoverExistingChromeSessions(batchSize = 12) {
+  const accounts = store.snapshot({ includeLogs: false }).accounts;
+  sessionRecovery = {
+    running: true,
+    recovered: 0,
+    checked: 0,
+    total: accounts.length,
+  };
+
+  try {
+    for (let offset = 0; offset < accounts.length; offset += batchSize) {
+      const batch = accounts.slice(offset, offset + batchSize);
+      await Promise.all(batch.map(async (account) => {
+        try {
+          const current = store.getAccount(account.id);
+          if (!current) return;
+          const session = await chrome.attachIfRunning(current);
+          if (session) sessionRecovery.recovered += 1;
+        } catch {}
+        finally {
+          sessionRecovery.checked += 1;
+        }
+      }));
+    }
+  } finally {
+    sessionRecovery.running = false;
   }
-  if (recovered) console.log(`[PirateLegend] Reattached ${recovered} Chrome profile(s)`);
+
+  if (sessionRecovery.recovered) {
+    console.log(`[PirateLegend] Reattached ${sessionRecovery.recovered} Chrome profile(s)`);
+  }
 }
 
-recoverExistingChromeSessions()
-  .catch(() => {})
-  .finally(() => {
-    server.listen(PORT, "127.0.0.1", () => {
-      console.log(`Pirate Legend Automation: http://127.0.0.1:${PORT}`);
-      console.log(`Project: ${ROOT}`);
-    });
-  });
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`Pirate Legend Automation: http://127.0.0.1:${PORT}`);
+  console.log(`Project: ${ROOT}`);
+});
+
+recoverExistingChromeSessions().catch((error) => {
+  sessionRecovery.running = false;
+  console.error("[PirateLegend] Session recovery failed:", error.message);
+});
 
 server.on("error", (error) => {
   if (error?.code === "EADDRINUSE") {

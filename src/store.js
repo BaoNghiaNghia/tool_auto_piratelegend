@@ -23,8 +23,24 @@ class Store {
   constructor(rootDir) {
     this.dataDir = path.join(rootDir, "data");
     this.file = path.join(this.dataDir, "state.json");
+    this.logFile = path.join(this.dataDir, "activity.jsonl");
     fs.mkdirSync(this.dataDir, { recursive: true });
-    this.state = this.#load();
+
+    const loaded = this.#load();
+    this.state = {
+      schemaVersion: 1,
+      accounts: loaded.accounts,
+    };
+    this.revision = 1;
+    this.logWritesSinceCompact = 0;
+    this.activityWriteError = "";
+
+    const hadActivityFile = fs.existsSync(this.logFile);
+    this.logs = this.#loadActivity(hadActivityFile ? [] : loaded.logs);
+    if (!hadActivityFile && loaded.logs.length) {
+      this.#compactLogs();
+      this.save();
+    }
   }
 
   #load() {
@@ -77,6 +93,64 @@ class Store {
     }
   }
 
+  #loadActivity(legacyLogs = []) {
+    if (fs.existsSync(this.logFile)) {
+      try {
+        const lines = fs.readFileSync(this.logFile, "utf8")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-1000);
+        const parsed = [];
+        for (const line of lines) {
+          try {
+            const item = JSON.parse(line);
+            if (item && typeof item.id === "string" && typeof item.accountId === "string") {
+              parsed.push(item);
+            }
+          } catch {}
+        }
+        return parsed.slice(-500).reverse();
+      } catch {}
+    }
+
+    return (Array.isArray(legacyLogs) ? legacyLogs : [])
+      .filter((log) => log && typeof log.id === "string" && typeof log.accountId === "string")
+      .slice(0, 500);
+  }
+
+  #compactLogs() {
+    const tmp = this.logFile + ".tmp";
+    try {
+      const lines = this.logs.slice(0, 500).reverse().map((log) => JSON.stringify(log)).join("\n");
+      fs.writeFileSync(tmp, lines ? lines + "\n" : "", "utf8");
+      fs.renameSync(tmp, this.logFile);
+      this.logWritesSinceCompact = 0;
+      this.activityWriteError = "";
+      return true;
+    } catch (error) {
+      this.activityWriteError = error.message || String(error);
+      try { fs.rmSync(tmp, { force: true }); } catch {}
+      return false;
+    }
+  }
+
+  #appendLog(log) {
+    try {
+      fs.appendFileSync(this.logFile, JSON.stringify(log) + "\n", "utf8");
+      this.logWritesSinceCompact += 1;
+      if (this.logWritesSinceCompact >= 100) return this.#compactLogs();
+      this.activityWriteError = "";
+      return true;
+    } catch (error) {
+      this.activityWriteError = error.message || String(error);
+      return false;
+    }
+  }
+
+  #touch() {
+    this.revision += 1;
+  }
+
   #validateAccount(input, currentId = "") {
     const role = input.role === "SUB" ? "SUB" : input.role === "MAIN" ? "MAIN" : null;
     if (!role) throw new Error("Role must be MAIN or SUB");
@@ -112,12 +186,36 @@ class Store {
 
   save() {
     const tmp = this.file + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(this.state, null, 2), "utf8");
+    const persisted = {
+      schemaVersion: 1,
+      accounts: this.state.accounts,
+    };
+    fs.writeFileSync(tmp, JSON.stringify(persisted, null, 2), "utf8");
     fs.renameSync(tmp, this.file);
   }
 
-  snapshot() {
-    return JSON.parse(JSON.stringify(this.state));
+  snapshot(options = {}) {
+    const includeLogs = options.includeLogs !== false;
+    const logLimit = Math.max(0, Math.min(500, Number(options.logLimit ?? 500)));
+    const snapshot = {
+      schemaVersion: 1,
+      revision: this.revision,
+      accounts: this.state.accounts,
+    };
+    if (includeLogs) snapshot.logs = this.logs.slice(0, logLimit);
+    return JSON.parse(JSON.stringify(snapshot));
+  }
+
+  storageStats() {
+    const safeSize = (file) => {
+      try { return fs.statSync(file).size; } catch { return 0; }
+    };
+    return {
+      activityCount: this.logs.length,
+      stateFileBytes: safeSize(this.file),
+      activityFileBytes: safeSize(this.logFile),
+      activityWriteError: this.activityWriteError,
+    };
   }
 
   exportConfig() {
@@ -194,30 +292,49 @@ class Store {
     }
 
     let backupFile = null;
-    if (fs.existsSync(this.file)) {
-      backupFile = path.join(this.dataDir, `state.before-restore-${Date.now()}.json`);
-      fs.copyFileSync(this.file, backupFile);
+    let activityBackupFile = null;
+    const backupStamp = Date.now();
 
+    if (fs.existsSync(this.file)) {
+      backupFile = path.join(this.dataDir, `state.before-restore-${backupStamp}.json`);
+      fs.copyFileSync(this.file, backupFile);
+    }
+
+    if (fs.existsSync(this.logFile)) {
+      try {
+        if (fs.statSync(this.logFile).size > 0) {
+          activityBackupFile = path.join(this.dataDir, `activity.before-restore-${backupStamp}.jsonl`);
+          fs.copyFileSync(this.logFile, activityBackupFile);
+        }
+      } catch {}
+    }
+
+    const pruneBackups = (pattern) => {
       const backups = fs.readdirSync(this.dataDir)
-        .filter((name) => /^state\.before-restore-\d+\.json$/.test(name))
+        .filter((name) => pattern.test(name))
         .sort()
         .reverse();
       for (const oldBackup of backups.slice(10)) {
         try { fs.rmSync(path.join(this.dataDir, oldBackup), { force: true }); } catch {}
       }
-    }
+    };
+    pruneBackups(/^state\.before-restore-\d+\.json$/);
+    pruneBackups(/^activity\.before-restore-\d+\.jsonl$/);
 
     this.state = {
       schemaVersion: 1,
       accounts: staged,
-      logs: [],
     };
+    this.logs = [];
+    this.#compactLogs();
+    this.#touch();
     this.save();
     return {
       accountCount: staged.length,
       mainCount: staged.filter((account) => account.role === "MAIN").length,
       subCount: staged.filter((account) => account.role === "SUB").length,
       backupFile: backupFile ? path.basename(backupFile) : null,
+      activityBackupFile: activityBackupFile ? path.basename(activityBackupFile) : null,
     };
   }
 
@@ -238,6 +355,7 @@ class Store {
       updatedAt: now,
     };
     this.state.accounts.push(account);
+    this.#touch();
     this.save();
     this.log(account.id, "INFO", "Account created");
     return account;
@@ -271,6 +389,7 @@ class Store {
       if (Object.prototype.hasOwnProperty.call(patch, key)) account[key] = patch[key];
     }
     account.updatedAt = new Date().toISOString();
+    this.#touch();
     this.save();
     return account;
   }
@@ -285,22 +404,29 @@ class Store {
         account.updatedAt = new Date().toISOString();
       }
     });
-    this.state.logs = this.state.logs.filter((log) => log.accountId !== id);
-    if (this.state.accounts.length !== before) this.save();
-    return this.state.accounts.length !== before;
+    const deleted = this.state.accounts.length !== before;
+    if (deleted) {
+      this.logs = this.logs.filter((log) => log.accountId !== id);
+      this.#compactLogs();
+      this.#touch();
+      this.save();
+    }
+    return deleted;
   }
 
   log(accountId, level, message, meta = null) {
-    this.state.logs.unshift({
+    const entry = {
       id: crypto.randomUUID(),
       accountId,
       level,
       message,
       meta,
       at: new Date().toISOString(),
-    });
-    this.state.logs = this.state.logs.slice(0, 500);
-    this.save();
+    };
+    this.logs.unshift(entry);
+    this.logs = this.logs.slice(0, 500);
+    this.#appendLog(entry);
+    this.#touch();
   }
 }
 

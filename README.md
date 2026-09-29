@@ -94,21 +94,33 @@ Health endpoint:
 http://127.0.0.1:3210/api/health
 ```
 
-It reports uptime, schema version, MAIN/SUB counts, active Chrome sessions, and running jobs.
+It reports uptime, schema version, MAIN/SUB counts, active Chrome sessions, running jobs, state/activity file sizes, activity count, activity-write errors, and startup session-recovery progress.
 
-The local UI includes profile search and filters for MAIN, SUB, attention-required states, and currently open Chrome sessions. Profiles are ordered by MAIN group, with each MAIN's SUB profiles directly after it. Each profile card shows its latest activity time and disables actions that are not valid for the current state.
+The local UI includes profile search and filters for MAIN, SUB, attention-required states, and currently open Chrome sessions. Profiles are ordered by MAIN group, with each MAIN's SUB profiles directly after it. Each profile card shows its latest activity time and disables actions that are not valid for the current state. The dashboard also shows the current number of open Chrome profiles and provides **Close idle Chrome** to close managed Chrome windows that are not running a job.
 
 ### Configuration backup / restore
 
 Use **Export config** to download a JSON backup containing profile configuration and MAIN → SUB mapping. The export contains profile IDs, labels, roles, explicit Chrome profile paths, parent mapping, and stored referral URLs. It does **not** export Chrome cookies/session data.
 
-Use **Restore config** to replace the current profile configuration from one of these JSON files. Restore is blocked while jobs are running or managed Chrome profiles are open. Before replacing the active configuration, the tool automatically saves the current state as:
+Use **Restore config** to replace the current profile configuration from one of these JSON files. Restore is blocked while jobs are running or managed Chrome profiles are open. Before replacing the active configuration, the tool automatically saves the current state and activity history as:
 
 ```
 data\state.before-restore-<timestamp>.json
+data\activity.before-restore-<timestamp>.jsonl
 ```
 
-The 10 newest restore-safety backups are retained automatically. Restored accounts start with clean runtime status/turn counters while retaining IDs and mapping, so auto-managed Chrome profile directories continue to match the restored account IDs.
+The 10 newest state backups and 10 newest activity backups are retained automatically. Restored accounts start with clean runtime status/turn counters while retaining IDs and mapping, so auto-managed Chrome profile directories continue to match the restored account IDs.
+
+## Performance / scaling
+
+- Account/runtime state lives in `state.json`; activity is append-only in `activity.jsonl`, so writing a log no longer rewrites the full state file.
+- Activity is kept to 500 recent events in memory. The JSONL file is compacted in batches instead of on every event.
+- `/api/state` uses a revision token. Idle polling returns only a tiny `unchanged` response instead of serializing all profiles/logs again.
+- UI polling never overlaps: approximately every 2 seconds while visible and every 10 seconds while the tab is in the background.
+- Passive state/health reads run Chrome liveness checks in the background. DevTools checks are batched (12 at a time) and deduplicated.
+- Startup session recovery runs in the background in batches, so the local UI starts immediately even with many stale Chrome profiles.
+- Profile grouping/search uses indexed lookups instead of repeated O(n²) scans. The UI renders at most 300 matching profile cards at once; Search/Filter narrows larger sets.
+- The dominant resource cost at scale remains Chrome itself. Keep only profiles you actively need open and use **Close idle Chrome** to reclaim RAM.
 
 ## Validation
 
@@ -145,13 +157,14 @@ npm run smoke:recovery
 
 ## Local data
 
-Runtime state:
+Runtime state and activity:
 
 ```
 data\state.json
+data\activity.jsonl
 ```
 
-State files use schema version 1. Older/missing fields are normalized when loaded. If `state.json` is not valid JSON, the original file is preserved as `data\state.corrupt-<timestamp>.json` and the app starts with an empty safe state.
+`state.json` stores profile/runtime state; activity is separated into `activity.jsonl` to reduce write amplification. Legacy activity embedded in older `state.json` files is migrated automatically. State files use schema version 1. Older/missing fields are normalized when loaded. If `state.json` is not valid JSON, the original file is preserved as `data\state.corrupt-<timestamp>.json` and the app starts with an empty safe state.
 
 Auto-managed Chrome sessions:
 
