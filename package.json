@@ -1,0 +1,15 @@
+{
+  "name": "tool-auto-piratelegend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Chrome profile automation manager for Pirate Legend event",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/store.js && node --check src/cdp.js && node --check src/chrome-manager.js && node --check src/piratelegend.js && node --check scripts/self-check.js && node --check scripts/chrome-smoke.js && node scripts/self-check.js",
+    "smoke:chrome": "node scripts/chrome-smoke.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

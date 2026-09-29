@@ -1,0 +1,5 @@
+data/
+chrome-profiles/
+*.log
+.DS_Store
+Thumbs.db
