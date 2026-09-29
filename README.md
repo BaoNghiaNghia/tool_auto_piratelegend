@@ -52,7 +52,9 @@ chrome-profiles\<account-id>
 
 The same explicit Chrome profile path cannot be assigned to two accounts.
 
-The tool can reattach to Chrome sessions that it previously launched if the local server is restarted while those Chrome windows remain open.
+The tool can reattach to Chrome sessions that it previously launched if the local server is restarted while those Chrome windows remain open. Graceful server shutdown leaves managed Chrome windows open by default; use the profile card's **Close** action when you explicitly want that Chrome profile closed.
+
+The API also refreshes Chrome-session liveness before state/action requests, so a profile manually closed outside the tool is removed from the in-memory session list instead of remaining stuck as `OPEN`.
 
 Do not open the same profile directory separately in another Chrome process while the tool is using it.
 
@@ -120,11 +122,14 @@ Optional Chrome integration smoke tests:
 ```powershell
 npm run smoke:chrome
 npm run smoke:inspect
+npm run smoke:recovery
 ```
 
 `smoke:chrome` creates a temporary local Chrome profile, opens the teaser URL through the tool's own Chrome DevTools Protocol implementation, confirms the target URL, closes Chrome, and removes the test profile.
 
 `smoke:inspect` creates an isolated temporary profile and validates the read-only Inspect path end-to-end. It checks that the teaser target is selected after Chrome startup and reports observable page state without clicking mission/reward controls.
+
+`smoke:recovery` simulates a local-server restart: it launches a temporary Chrome profile with one manager instance, detaches it without closing Chrome, creates a fresh manager instance, reattaches through `DevToolsActivePort`, verifies the Pirate Legend URL, then closes and removes the temporary profile.
 
 ## Local data
 

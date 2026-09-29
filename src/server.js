@@ -112,6 +112,10 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
+    if (pathname.startsWith("/api/")) {
+      await chrome.refreshLiveness();
+    }
+
     if (req.method === "GET" && pathname === "/api/health") {
       const snapshot = store.snapshot();
       const runningJobs = [...jobs.values()].filter((job) => job.state === "RUNNING").length;
@@ -247,10 +251,10 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[PirateLegend] Shutting down (${signal})...`);
-  const ids = [...chrome.sessions.keys()];
-  await Promise.allSettled(ids.map((id) => chrome.close(id)));
+  console.log("[PirateLegend] Leaving managed Chrome windows open for session recovery.");
+  chrome.detachForServerShutdown();
   server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 3000).unref();
+  setTimeout(() => process.exit(0), 1500).unref();
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"));

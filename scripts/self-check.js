@@ -2,11 +2,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Store, isPirateLegendUrl } = require("../src/store");
+const { ChromeManager } = require("../src/chrome-manager");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function main() {
 const major = Number(process.versions.node.split(".")[0]);
 assert(major >= 22, `Node.js 22+ is required. Current: ${process.versions.node}`);
 
@@ -94,7 +96,41 @@ try {
   const backups = fs.readdirSync(path.join(corruptRoot, "data")).filter(name => name.startsWith("state.corrupt-"));
   assert(backups.length === 1, "Corrupt state backup was not created");
 
-  console.log("[self-check] Node, UI, storage, migration, validation: OK");
+  const chrome = new ChromeManager(temp);
+  let unrefCalls = 0;
+  chrome.sessions.set("alive", {
+    port: 10001,
+    profilePath: path.join(temp, "alive"),
+    child: { unref() { unrefCalls += 1; } },
+  });
+  chrome.sessions.set("dead", {
+    port: 10002,
+    profilePath: path.join(temp, "dead"),
+    child: null,
+  });
+
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => ({
+    ok: String(url).includes(":10001/"),
+  });
+  try {
+    await chrome.refreshLiveness(0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert(chrome.isRunning("alive"), "Live Chrome session was pruned incorrectly");
+  assert(!chrome.isRunning("dead"), "Dead Chrome session was not pruned");
+
+  chrome.detachForServerShutdown();
+  assert(unrefCalls === 1, "Managed Chrome child was not detached on server shutdown");
+
+  console.log("[self-check] Node, UI, storage, migration, Chrome liveness, validation: OK");
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
+}
+
+main().catch((error) => {
+  console.error("[self-check]", error);
+  process.exitCode = 1;
+});

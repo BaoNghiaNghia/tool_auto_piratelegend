@@ -15,6 +15,7 @@ class ChromeManager {
     this.defaultProfilesDir = path.join(rootDir, "chrome-profiles");
     fs.mkdirSync(this.defaultProfilesDir, { recursive: true });
     this.sessions = new Map();
+    this.lastLivenessCheckAt = 0;
   }
 
   resolveProfilePath(account) {
@@ -158,7 +159,9 @@ class ChromeManager {
     if (!session) throw new Error("Chrome profile is not running");
     let response;
     try {
-      response = await fetch(`http://127.0.0.1:${session.port}/json/list`);
+      response = await fetch(`http://127.0.0.1:${session.port}/json/list`, {
+        signal: AbortSignal.timeout(1500),
+      });
     } catch {
       this.sessions.delete(accountId);
       throw new Error("Chrome DevTools is no longer reachable");
@@ -234,6 +237,31 @@ class ChromeManager {
     }
     this.sessions.delete(accountId);
     return true;
+  }
+
+  async refreshLiveness(minIntervalMs = 1200) {
+    const now = Date.now();
+    if (now - this.lastLivenessCheckAt < minIntervalMs) return;
+    this.lastLivenessCheckAt = now;
+
+    const entries = [...this.sessions.entries()];
+    await Promise.all(entries.map(async ([accountId, session]) => {
+      try {
+        const response = await fetch(`http://127.0.0.1:${session.port}/json/version`, {
+          signal: AbortSignal.timeout(700),
+        });
+        if (!response.ok) throw new Error("DevTools unavailable");
+      } catch {
+        const current = this.sessions.get(accountId);
+        if (current === session) this.sessions.delete(accountId);
+      }
+    }));
+  }
+
+  detachForServerShutdown() {
+    for (const session of this.sessions.values()) {
+      try { session.child?.unref(); } catch {}
+    }
   }
 
   isRunning(accountId) {
