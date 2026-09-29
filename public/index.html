@@ -91,6 +91,7 @@
     .state-dot.attention {background:var(--red);}
     .muted {color:var(--muted);font-size:12px;}
     .account-meta {margin-top:5px;color:#68758b;font-size:11px;}
+    .inspect-result {margin-top:7px;padding:6px 8px;border:1px solid #293449;border-radius:7px;background:#10151f;color:#9eacc1;font-size:11px;}
     .mono {font-family:ui-monospace,SFMono-Regular,Consolas,monospace;}
     .clip {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
     .actions {display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;max-width:330px;}
@@ -322,9 +323,17 @@
         const status = busy ? (a.job.name + " · RUNNING") : a.status;
         const dotClass = stateDotClass(a, busy);
         const activityAt = lastActivity(a.id) || a.updatedAt;
+        const inspected = a.job?.name === "INSPECT" && a.job?.state === "DONE" ? a.job.result : null;
+        const inspectInfo = inspected
+          ? '<div class="inspect-result">Inspect · login: ' + (inspected.loginVisible ? "yes" : "no") +
+            ' · turns: ' + (inspected.turns == null ? "unknown" : esc(inspected.turns)) +
+            ' · invite: ' + (inspected.inviteMissionVisible ? "yes" : "no") +
+            ' · referral: ' + (inspected.referralDetected ? "yes" : "no") + '</div>'
+          : "";
         const mainActions = a.role === "MAIN" ? [
           '<button class="btn small blue" data-act="flow1" data-id="'+a.id+'"'+lock+'>Flow 1</button>',
           '<button class="btn small" data-act="capture-referral" data-id="'+a.id+'"'+captureLock+' title="Chrome profile must be open">Capture link</button>',
+          '<button class="btn small" data-act="inspect" data-id="'+a.id+'"'+lock+'>Inspect</button>',
           '<button class="btn small" data-act="read-turns" data-id="'+a.id+'"'+lock+'>Check lượt</button>',
           '<button class="btn small good" data-act="flow2" data-id="'+a.id+'"'+lock+'>Flow 2</button>'
         ].join("") : '<button class="btn small good" data-act="open-referral" data-id="'+a.id+'"'+lock+'>Open referral</button>';
@@ -333,7 +342,7 @@
           '<div><div class="name-row">'+roleTag+'<div class="name">'+esc(a.label)+'</div></div>' +
           '<div class="status-line"><span class="state-dot '+dotClass+'"></span><span class="status">'+esc(status)+'</span></div>'+relation+
           (a.lastError ? '<div class="muted" style="color:#ff8d8d">'+esc(a.lastError)+'</div>' : '')+
-          '<div class="account-meta">Last activity: '+esc(fmtTime(activityAt) || "—")+'</div></div>' +
+          '<div class="account-meta">Last activity: '+esc(fmtTime(activityAt) || "—")+'</div>'+inspectInfo+'</div>' +
           '<div>'+turns+'</div>' +
           '<div>'+ref+'<div class="muted clip" title="'+esc(a.profilePath || "Auto profile")+'">'+esc(a.profilePath || "Auto-managed Chrome profile")+'</div></div>' +
           '<div class="actions">' +

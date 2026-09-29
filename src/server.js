@@ -187,6 +187,11 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, { ok: true });
       }
 
+      if (req.method === "POST" && action === "inspect") {
+        startJob(account, "INSPECT", () => pirate.inspect(account));
+        return json(res, 202, { ok: true });
+      }
+
       if (req.method === "POST" && action === "read-turns") {
         startJob(account, "READ_TURNS", () => pirate.refreshTurns(account));
         return json(res, 202, { ok: true });

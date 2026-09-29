@@ -167,17 +167,35 @@ class ChromeManager {
     return response.json();
   }
 
-  async pageClient(accountId, timeoutMs = 8000) {
+  async pageClient(accountId, timeoutMs = 8000, preferPirateLegend = true) {
     const started = Date.now();
-    let pages = [];
+    let target = null;
+    let fallback = null;
+
     while (Date.now() - started < timeoutMs) {
       const targets = await this.targets(accountId);
-      pages = targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl);
-      if (pages.length) break;
+      const pages = targets.filter((item) => item.type === "page" && item.webSocketDebuggerUrl);
+      const preferred = pages.find((page) => page.url.includes("piratelegend.vn"));
+
+      if (preferred) {
+        target = preferred;
+        break;
+      }
+
+      fallback = pages.find((page) =>
+        page.url &&
+        page.url !== "about:blank" &&
+        !page.url.startsWith("chrome://")
+      ) || pages[0] || fallback;
+
+      if (!preferPirateLegend && fallback) {
+        target = fallback;
+        break;
+      }
       await sleep(100);
     }
 
-    const target = pages.find((page) => page.url.includes("piratelegend.vn")) || pages[0];
+    target ||= fallback;
     if (!target) throw new Error("No Chrome page target found");
 
     const client = new CdpClient(target.webSocketDebuggerUrl);
@@ -188,7 +206,7 @@ class ChromeManager {
   }
 
   async navigate(accountId, url) {
-    const client = await this.pageClient(accountId);
+    const client = await this.pageClient(accountId, 2000, false);
     try {
       await client.send("Page.navigate", { url });
     } finally {

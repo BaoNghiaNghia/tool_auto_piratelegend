@@ -17,6 +17,10 @@ D:\Bot_Tool_Auto_Game\tool_auto_piratelegend
   - Navigate toward the treasure/invite area using visible DOM text.
   - Detect when login is required and leave login to the user in that Chrome profile.
   - Capture and persist the referral URL from visible inputs, data attributes, links, or the page copy action.
+- Inspect:
+  - Open the teaser in the selected MAIN profile without clicking missions or reward actions.
+  - Read current URL/title, login visibility, mini-game/invite visibility, `SỐ LƯỢT`, and whether a referral URL is already visible.
+  - Show the latest inspection result directly on the profile card and write a compact summary to Activity.
 - Check lượt:
   - Navigate to the treasure area.
   - Read the current `SỐ LƯỢT` without consuming a turn.
@@ -111,13 +115,16 @@ It checks:
 - Duplicate Chrome profile-path rejection.
 - Pirate Legend referral URL validation.
 
-Optional Chrome integration smoke test:
+Optional Chrome integration smoke tests:
 
 ```powershell
 npm run smoke:chrome
+npm run smoke:inspect
 ```
 
-This creates a temporary local Chrome profile, opens the teaser URL through the tool's own Chrome DevTools Protocol implementation, confirms the target URL, closes Chrome, and removes the test profile.
+`smoke:chrome` creates a temporary local Chrome profile, opens the teaser URL through the tool's own Chrome DevTools Protocol implementation, confirms the target URL, closes Chrome, and removes the test profile.
+
+`smoke:inspect` creates an isolated temporary profile and validates the read-only Inspect path end-to-end. It checks that the teaser target is selected after Chrome startup and reports observable page state without clicking mission/reward controls.
 
 ## Local data
 

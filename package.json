@@ -6,8 +6,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check src/cdp.js && node --check src/chrome-manager.js && node --check src/piratelegend.js && node --check scripts/self-check.js && node --check scripts/chrome-smoke.js && node scripts/self-check.js",
-    "smoke:chrome": "node scripts/chrome-smoke.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check src/cdp.js && node --check src/chrome-manager.js && node --check src/piratelegend.js && node --check scripts/self-check.js && node --check scripts/chrome-smoke.js && node --check scripts/inspect-smoke.js && node scripts/self-check.js",
+    "smoke:chrome": "node scripts/chrome-smoke.js",
+    "smoke:inspect": "node scripts/inspect-smoke.js"
   },
   "engines": {
     "node": ">=22"

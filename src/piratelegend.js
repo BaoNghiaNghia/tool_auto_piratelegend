@@ -9,10 +9,16 @@ function jsString(value) {
 async function waitForDocument(client, timeoutMs = 20000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const state = await client.evaluate("document.readyState");
-    if (state === "interactive" || state === "complete") return;
+    const page = await client.evaluate(`({
+      readyState: document.readyState,
+      href: location.href
+    })`);
+    const ready = page?.readyState === "interactive" || page?.readyState === "complete";
+    const realPage = page?.href && page.href !== "about:blank" && !page.href.startsWith("chrome://");
+    if (ready && realPage) return page;
     await sleep(250);
   }
+  throw new Error("Timed out waiting for the Chrome page to finish initial navigation");
 }
 
 async function clickText(client, candidates) {
@@ -169,6 +175,28 @@ async function loginIsRequired(client) {
   return client.evaluate(`(() => {
     const text = String(document.body?.innerText || "").toUpperCase();
     return text.includes("ĐĂNG NHẬP") || text.includes("ĐANG NHẬP") || text.includes("LOGIN");
+  })()`);
+}
+
+async function inspectPage(client) {
+  return client.evaluate(`(() => {
+    const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+    const text = clean(document.body?.innerText || "");
+    const upper = text.toUpperCase();
+    const buttonLabels = [...document.querySelectorAll('button,a,[role="button"]')]
+      .map((el) => clean(el.innerText || el.getAttribute("aria-label")))
+      .filter(Boolean)
+      .slice(0, 40);
+    return {
+      url: location.href,
+      title: document.title,
+      loginVisible: upper.includes("ĐĂNG NHẬP") || upper.includes("LOGIN"),
+      miniGameVisible: upper.includes("MINI GAME") || upper.includes("NHẬN LƯỢT"),
+      inviteMissionVisible: upper.includes("MỜI BẠN BÈ") || upper.includes("LINK MỜI"),
+      exchangeVisible: upper.includes("ĐỔI CODE"),
+      historyVisible: upper.includes("LỊCH SỬ"),
+      buttonLabels,
+    };
   })()`);
 }
 
@@ -353,6 +381,43 @@ class PirateLegendAutomation {
     this.store.log(account.id, "INFO", `Opening referral from MAIN: ${parent.label}`);
     await this.chrome.launch(account, parent.referralUrl);
     return { referralUrl: parent.referralUrl };
+  }
+
+  async inspect(account) {
+    if (account.role !== "MAIN") throw new Error("Inspect is only available for MAIN profiles");
+
+    await this.chrome.launch(account, TEASER_URL);
+    const client = await this.chrome.pageClient(account.id);
+    try {
+      await waitForDocument(client);
+      await sleep(600);
+
+      const page = await inspectPage(client);
+      const turns = await readTurns(client);
+      const referralUrl = await detectReferralUrl(client);
+
+      const patch = { lastError: "" };
+      if (turns !== null) patch.turns = turns;
+      if (referralUrl) patch.referralUrl = referralUrl;
+      this.store.updateAccount(account.id, patch);
+
+      const summary = [
+        `login=${page.loginVisible ? "yes" : "no"}`,
+        `turns=${turns === null ? "unknown" : turns}`,
+        `invite=${page.inviteMissionVisible ? "yes" : "no"}`,
+        `referral=${referralUrl ? "yes" : "no"}`,
+      ].join(" · ");
+      this.store.log(account.id, "INFO", `Inspect: ${summary}`);
+
+      return {
+        ...page,
+        turns,
+        referralDetected: Boolean(referralUrl),
+        referralUrl: referralUrl || null,
+      };
+    } finally {
+      client.close();
+    }
   }
 
   async refreshTurns(account) {
