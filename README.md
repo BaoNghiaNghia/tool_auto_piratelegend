@@ -147,9 +147,14 @@ The 10 newest state backups and 10 newest activity backups are retained automati
 - Profile grouping/search uses indexed lookups instead of repeated O(n²) scans. The UI renders at most 300 matching profile cards at once; Search/Filter narrows larger sets.
 - The dominant resource cost at scale remains Chrome itself. Keep only profiles you actively need open and use **Close idle Chrome** to reclaim RAM.
 
-## Build Windows portable
+## Build Windows Lite
 
-Development/source mode requires Node.js 22+, but the release build can bundle the exact Node runtime used to build it.
+The default build is optimized for the smallest practical output. It does **not** create a ZIP and does **not** bundle Node.js.
+
+Requirements on the machine that runs the built tool:
+
+- Node.js 22 or newer.
+- Google Chrome.
 
 Double-click:
 
@@ -163,46 +168,24 @@ or run:
 npm run build
 ```
 
-The default build runs the complete source/self-check in a temporary staging folder and leaves only one current release archive:
+The build validates the source, creates the release through a temporary staging folder, removes old build artifacts when Windows allows it, and leaves one lightweight folder:
 
 ```
-dist\PirateLegend-v<version>-win-<arch>.zip
+dist\PirateLegend\
 ```
 
-Old timestamped build folders, old ZIPs, stale staging folders, and `LATEST.txt` are cleaned automatically after a successful build.
+The Lite folder contains only runtime-critical files:
 
-For local debugging when you also want an unpacked release folder, run:
+- `Start PirateLegend.bat` — checks for Node.js 22+ and starts the tool.
+- `src\` — backend/runtime code.
+- `public\` — UI and Pirate Legend logo.
+- `scripts\start-local.js` — single-instance launcher and browser opener.
 
-```powershell
-npm run build:folder
-```
+It intentionally excludes `node.exe`, ZIP packaging, build manifests, development scripts, tests, documentation, `data\`, and `chrome-profiles\`.
 
-That keeps only:
+This makes the build dramatically smaller. Local account configuration and Chrome sessions are created inside `data\` and `chrome-profiles\` only after the built tool is run.
 
-```
-dist\PirateLegend-v<version>-win-<arch>\
-dist\PirateLegend-v<version>-win-<arch>.zip
-```
-
-The portable archive contains:
-
-- `Start PirateLegend.bat` — user-facing launcher.
-- `runtime\node.exe` — bundled Node runtime, so Node does not need to be installed on the target machine.
-- `src\` and `public\` — application runtime files.
-- `scripts\start-local.js` — safe single-instance launcher.
-- `release-manifest.json` — version, Git commit, build time, architecture, Node version, file sizes and SHA-256 hashes.
-- `README-PORTABLE.txt` — quick start and upgrade instructions.
-
-The release intentionally does **not** include:
-
-```
-data\
-chrome-profiles\
-```
-
-This prevents local account configuration, Chrome sessions, cookies, and profile data from being copied into release artifacts. On another machine, extract the ZIP and double-click `Start PirateLegend.bat`. Google Chrome is still required.
-
-For upgrades where you want to retain local sessions, keep/copy the existing `data\` and `chrome-profiles\` directories into the new extracted release folder before starting it.
+Rebuilding the same `dist\PirateLegend\` folder replaces only application files. Existing `data\` and `chrome-profiles\` are preserved automatically, so rebuilding does not wipe configured accounts or Chrome login sessions.
 
 ## Validation
 

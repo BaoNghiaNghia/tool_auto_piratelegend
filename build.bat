@@ -12,7 +12,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [PirateLegend] Building compact Windows portable release...
+echo [PirateLegend] Building ultra-light folder...
 node scripts\build-release.js
 if errorlevel 1 (
   echo.
@@ -22,6 +22,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo [PirateLegend] Build complete.
-echo [PirateLegend] dist\ now keeps only the latest release ZIP.
+echo [PirateLegend] Build complete: dist\PirateLegend\
+echo [PirateLegend] No ZIP. No bundled Node runtime.
 pause

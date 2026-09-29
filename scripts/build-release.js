@@ -1,98 +1,62 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const crypto = require("node:crypto");
-const { execFileSync, spawnSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const DIST = path.join(ROOT, "dist");
-const bundleName = `PirateLegend-v${pkg.version}-win-${process.arch}`;
-const FINAL_ZIP = path.join(DIST, `${bundleName}.zip`);
-const FINAL_FOLDER = path.join(DIST, bundleName);
-const KEEP_FOLDER = process.argv.includes("--keep-folder");
-const buildStamp = `${Date.now()}-${process.pid}`;
-const STAGING = path.join(DIST, `.build-${buildStamp}`);
-const OUT = path.join(STAGING, bundleName);
-const STAGING_ZIP = path.join(STAGING, `${bundleName}.zip`);
+const OUT = path.join(DIST, "PirateLegend");
+const STAGING = path.join(ROOT, ".piratelegend-build");
 
 if (process.platform !== "win32") {
-  throw new Error("Windows portable build must be created on Windows.");
+  throw new Error("Windows build must be created on Windows.");
 }
 
-function rmSafe(target, recursive = false) {
-  fs.rmSync(target, {
-    recursive,
-    force: true,
-    maxRetries: 8,
-    retryDelay: 250,
-  });
-}
-
-function replaceFile(source, destination) {
-  const tempDestination = destination + ".new";
-  rmSafe(tempDestination);
-  fs.copyFileSync(source, tempDestination);
-  try {
-    rmSafe(destination);
-    fs.renameSync(tempDestination, destination);
-  } catch (error) {
-    try { rmSafe(tempDestination); } catch {}
-    if (error?.code === "EPERM" || error?.code === "EBUSY") {
-      throw new Error(
-        "Cannot replace " + path.basename(destination) + " because Windows is using it. " +
-        "Close WinRAR/File Explorer preview or any process using the ZIP, then build again."
-      );
-    }
-    throw error;
-  }
+function rm(target, recursive = false) {
+  fs.rmSync(target, { recursive, force: true, maxRetries: 8, retryDelay: 250 });
 }
 
 function copyFile(relativePath) {
   const source = path.join(ROOT, relativePath);
-  const target = path.join(OUT, relativePath);
+  const target = path.join(STAGING, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
 }
 
 function copyDir(relativePath) {
-  const source = path.join(ROOT, relativePath);
-  const target = path.join(OUT, relativePath);
-  fs.cpSync(source, target, { recursive: true });
+  fs.cpSync(path.join(ROOT, relativePath), path.join(STAGING, relativePath), { recursive: true });
 }
 
-function sha256(file) {
-  const hash = crypto.createHash("sha256");
-  hash.update(fs.readFileSync(file));
-  return hash.digest("hex");
-}
-
-function gitCommit() {
-  try {
-    return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-      cwd: ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "";
+function folderBytes(dir) {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    total += entry.isDirectory() ? folderBytes(full) : fs.statSync(full).size;
   }
+  return total;
 }
 
-function writeReleaseLauncher() {
+function writeLauncher() {
   const content = [
     "@echo off",
     "setlocal",
     "cd /d \"%~dp0\"",
     "",
-    "set \"NODE_EXE=%~dp0runtime\\node.exe\"",
-    "if not exist \"%NODE_EXE%\" (",
-    "  echo [PirateLegend] Bundled Node runtime is missing.",
-    "  echo [PirateLegend] Re-extract the release ZIP and try again.",
+    "where node >nul 2>nul",
+    "if errorlevel 1 (",
+    "  echo [PirateLegend] Node.js was not found.",
+    "  echo [PirateLegend] Install Node.js 22 or newer, then run this file again.",
     "  pause",
     "  exit /b 1",
     ")",
     "",
-    "\"%NODE_EXE%\" scripts\\start-local.js",
+    "for /f \"tokens=1 delims=.\" %%V in (\'node -p \"process.versions.node\"\') do set \"NODE_MAJOR=%%V\"",
+    "if %NODE_MAJOR% LSS 22 (",
+    "  echo [PirateLegend] Node.js 22 or newer is required. Current: ",
+    "  node --version",
+    "  pause",
+    "  exit /b 1",
+    ")",
+    "",
+    "node scripts\\start-local.js",
     "",
     "if errorlevel 1 (",
     "  echo.",
@@ -101,156 +65,85 @@ function writeReleaseLauncher() {
     ")",
     "",
   ].join("\r\n");
-  fs.writeFileSync(path.join(OUT, "Start PirateLegend.bat"), content, "utf8");
+  fs.writeFileSync(path.join(STAGING, "Start PirateLegend.bat"), content, "utf8");
 }
 
-function collectFiles(dir, prefix = "") {
-  const result = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const relative = path.join(prefix, entry.name);
-    const absolute = path.join(dir, entry.name);
-    if (entry.isDirectory()) result.push(...collectFiles(absolute, relative));
-    else result.push(relative.replaceAll("\\", "/"));
-  }
-  return result.sort();
-}
-
-function cleanOldArtifacts() {
-  if (!fs.existsSync(DIST)) return [];
-
+function cleanOldDist() {
   const leftovers = [];
+  if (!fs.existsSync(DIST)) return leftovers;
   for (const entry of fs.readdirSync(DIST, { withFileTypes: true })) {
-    const name = entry.name;
-    const absolute = path.join(DIST, name);
-
-    if (name.startsWith(".build-")) {
-      if (absolute === STAGING) continue;
-      try { rmSafe(absolute, true); } catch { leftovers.push(name); }
-      continue;
-    }
-
-    if (name === "LATEST.txt") {
-      try { rmSafe(absolute); } catch { leftovers.push(name); }
-      continue;
-    }
-
-    const isReleaseFolder = entry.isDirectory() && /^PirateLegend-v.+-win-.+/.test(name);
-    const isReleaseZip = entry.isFile() && /^PirateLegend-v.+-win-.+\.zip$/i.test(name);
-    const keepCurrentFolder = KEEP_FOLDER && name === bundleName;
-    const keepCurrentZip = name === path.basename(FINAL_ZIP);
-
-    if ((isReleaseFolder && !keepCurrentFolder) || (isReleaseZip && !keepCurrentZip)) {
-      try { rmSafe(absolute, isReleaseFolder); } catch { leftovers.push(name); }
+    if (entry.name === "PirateLegend") continue;
+    const absolute = path.join(DIST, entry.name);
+    try {
+      rm(absolute, entry.isDirectory());
+    } catch {
+      leftovers.push(entry.name);
     }
   }
   return leftovers;
 }
-fs.mkdirSync(DIST, { recursive: true });
-for (const entry of fs.readdirSync(DIST, { withFileTypes: true })) {
-  if (entry.name.startsWith(".build-")) {
-    try { rmSafe(path.join(DIST, entry.name), true); } catch {}
+
+function installLiteBuild() {
+  if (!fs.existsSync(OUT)) {
+    fs.renameSync(STAGING, OUT);
+    return;
   }
+
+  const managed = ["src", "public", "scripts", "Start PirateLegend.bat"];
+  for (const name of managed) {
+    const target = path.join(OUT, name);
+    try { rm(target, fs.existsSync(target) && fs.statSync(target).isDirectory()); } catch (error) {
+      if (error?.code === "EPERM" || error?.code === "EBUSY") {
+        throw new Error(
+          "Cannot update dist\\PirateLegend because the running Lite build is using " + name + ". " +
+          "Close PirateLegend and build again."
+        );
+      }
+      throw error;
+    }
+  }
+
+  for (const name of ["src", "public", "scripts"]) {
+    fs.cpSync(path.join(STAGING, name), path.join(OUT, name), { recursive: true });
+  }
+  fs.copyFileSync(
+    path.join(STAGING, "Start PirateLegend.bat"),
+    path.join(OUT, "Start PirateLegend.bat")
+  );
+
+  for (const legacy of ["runtime", "README-PORTABLE.txt", "release-manifest.json"]) {
+    const target = path.join(OUT, legacy);
+    try { rm(target, fs.existsSync(target) && fs.statSync(target).isDirectory()); } catch {}
+  }
+
+  rm(STAGING, true);
 }
-fs.mkdirSync(path.join(OUT, "runtime"), { recursive: true });
+
+try { rm(STAGING, true); } catch {}
+fs.mkdirSync(STAGING, { recursive: true });
 
 copyDir("src");
 copyDir("public");
 copyFile("scripts/start-local.js");
-copyFile("README.md");
+writeLauncher();
 
-fs.copyFileSync(process.execPath, path.join(OUT, "runtime", "node.exe"));
-writeReleaseLauncher();
+const bytes = folderBytes(STAGING);
+fs.mkdirSync(DIST, { recursive: true });
+const leftovers = cleanOldDist();
 
-const releaseReadme = `Pirate Legend Automation v${pkg.version}
-
-START
-1. Extract the whole ZIP to a normal writable folder.
-2. Double-click "Start PirateLegend.bat".
-3. Google Chrome must be installed. Default path:
-   C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe
-4. The UI opens at http://127.0.0.1:3210
-
-DATA
-- Local account configuration is created in data\\
-- Persistent Chrome profiles are created in chrome-profiles\\
-- Neither folder is included in the release archive.
-- Keep these folders when upgrading if you want to preserve local sessions.
-
-UPGRADE
-1. Close the PirateLegend server window.
-2. Extract the new release to a new folder.
-3. Copy data\\ and chrome-profiles\\ from the old folder if you want to retain local state/sessions.
-4. Start the new release.
-
-The app stores no account passwords. Login sessions remain in Chrome profile data.
-`;
-fs.writeFileSync(path.join(OUT, "README-PORTABLE.txt"), releaseReadme, "utf8");
-
-const filesBeforeManifest = collectFiles(OUT);
-const manifest = {
-  name: pkg.name,
-  product: "Pirate Legend Automation",
-  version: pkg.version,
-  builtAt: new Date().toISOString(),
-  gitCommit: gitCommit(),
-  platform: process.platform,
-  arch: process.arch,
-  bundledNode: process.version,
-  entrypoint: "Start PirateLegend.bat",
-  excludedRuntimeData: ["data/", "chrome-profiles/"],
-  files: filesBeforeManifest.map((relative) => {
-    const file = path.join(OUT, relative);
-    return {
-      path: relative,
-      bytes: fs.statSync(file).size,
-      sha256: sha256(file),
-    };
-  }),
-};
-fs.writeFileSync(path.join(OUT, "release-manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
-
-const ps = spawnSync(
-  "powershell.exe",
-  [
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-Command",
-    `Compress-Archive -Path '${OUT.replaceAll("'", "''")}\\*' -DestinationPath '${STAGING_ZIP.replaceAll("'", "''")}' -Force`,
-  ],
-  { cwd: ROOT, encoding: "utf8" }
-);
-
-if (ps.status !== 0) {
-  throw new Error(`ZIP packaging failed: ${ps.stderr || ps.stdout || "unknown error"}`);
+try {
+  installLiteBuild();
+} catch (error) {
+  try { rm(STAGING, true); } catch {}
+  throw error;
 }
 
-replaceFile(STAGING_ZIP, FINAL_ZIP);
-
-if (KEEP_FOLDER) {
-  try { rmSafe(FINAL_FOLDER, true); } catch (error) {
-    if (error?.code === "EPERM" || error?.code === "EBUSY") {
-      throw new Error(
-        "Cannot replace the unpacked release folder because Windows is using it. " +
-        "Close any portable PirateLegend instance using that folder and try again."
-      );
-    }
-    throw error;
-  }
-  fs.cpSync(OUT, FINAL_FOLDER, { recursive: true });
-} else {
-  try { rmSafe(FINAL_FOLDER, true); } catch {}
-}
-
-const leftovers = cleanOldArtifacts();
-const zipBytes = fs.statSync(FINAL_ZIP).size;
-try { rmSafe(STAGING, true); } catch {}
-
-console.log(`[build] ZIP: ${FINAL_ZIP}`);
-console.log(`[build] ZIP size: ${(zipBytes / 1024 / 1024).toFixed(2)} MiB`);
-console.log(`[build] Bundled Node: ${process.version} (${process.arch})`);
-if (KEEP_FOLDER) console.log(`[build] Debug folder: ${FINAL_FOLDER}`);
+console.log(`[build] Lite folder: ${OUT}`);
+console.log(`[build] Size: ${(bytes / 1024).toFixed(1)} KiB`);
+console.log("[build] Bundled Node: no");
+console.log("[build] ZIP: no");
 if (leftovers.length) {
   console.warn(`[build] Could not remove locked old artifact(s): ${leftovers.join(", ")}`);
 } else {
-  console.log("[build] dist cleaned: only current release artifact(s) kept.");
+  console.log("[build] dist cleaned.");
 }
