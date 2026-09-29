@@ -21,12 +21,16 @@ async function main() {
     if (!/piratelegend\.vn/i.test(result.url || "")) {
       throw new Error(`Unexpected page URL: ${result.url || "(empty)"}`);
     }
+    if (typeof result.authenticated !== "boolean") throw new Error("authenticated must be boolean");
+    if (typeof result.loginRequired !== "boolean") throw new Error("loginRequired must be boolean");
     if (typeof result.loginVisible !== "boolean") throw new Error("loginVisible must be boolean");
     if (typeof result.inviteMissionVisible !== "boolean") throw new Error("inviteMissionVisible must be boolean");
     if (!(result.turns === null || Number.isFinite(result.turns))) throw new Error("turns must be null or number");
 
     console.log("[inspect-smoke]", JSON.stringify({
       url: result.url,
+      authenticated: result.authenticated,
+      loginRequired: result.loginRequired,
       loginVisible: result.loginVisible,
       turns: result.turns,
       inviteMissionVisible: result.inviteMissionVisible,

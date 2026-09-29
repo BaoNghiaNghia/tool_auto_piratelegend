@@ -171,15 +171,62 @@ async function ensureTreasureArea(client) {
   return turns;
 }
 
-async function loginIsRequired(client) {
+async function readAuthState(client) {
   return client.evaluate(`(() => {
-    const text = String(document.body?.innerText || "").toUpperCase();
-    return text.includes("ĐĂNG NHẬP") || text.includes("ĐANG NHẬP") || text.includes("LOGIN");
+    const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+    const visible = (el) => {
+      if (!el) return false;
+      const style = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        Number(style.opacity || 1) !== 0 &&
+        rect.width > 0 &&
+        rect.height > 0;
+    };
+
+    const interactive = [...document.querySelectorAll(
+      'button,a,[role="button"],input[type="button"],input[type="submit"]'
+    )];
+
+    const labelOf = (el) => clean(el.innerText || el.value || el.getAttribute("aria-label") || "");
+    const labels = interactive.map(labelOf).filter(Boolean);
+    const visibleLabels = interactive.filter(visible).map(labelOf).filter(Boolean);
+
+    const upper = labels.map((label) => label.toUpperCase());
+    const visibleUpper = visibleLabels.map((label) => label.toUpperCase());
+
+    const logoutPresent = upper.some((label) =>
+      label.includes("ĐĂNG XUẤT") || label.includes("LOGOUT") || label.includes("LOG OUT")
+    );
+    const logoutVisible = visibleUpper.some((label) =>
+      label.includes("ĐĂNG XUẤT") || label.includes("LOGOUT") || label.includes("LOG OUT")
+    );
+    const loginVisible = visibleUpper.some((label) =>
+      label === "ĐĂNG NHẬP" ||
+      label.startsWith("ĐĂNG NHẬP ") ||
+      label === "LOGIN" ||
+      label.startsWith("LOGIN ")
+    );
+
+    return {
+      authenticated: logoutPresent,
+      loginRequired: !logoutPresent && loginVisible,
+      loginVisible,
+      logoutVisible,
+      logoutPresent,
+      interactiveLabels: labels.slice(0, 40),
+    };
   })()`);
 }
 
+async function loginIsRequired(client) {
+  const auth = await readAuthState(client);
+  return Boolean(auth?.loginRequired);
+}
+
 async function inspectPage(client) {
-  return client.evaluate(`(() => {
+  const page = await client.evaluate(`(() => {
     const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
     const text = clean(document.body?.innerText || "");
     const upper = text.toUpperCase();
@@ -190,7 +237,6 @@ async function inspectPage(client) {
     return {
       url: location.href,
       title: document.title,
-      loginVisible: upper.includes("ĐĂNG NHẬP") || upper.includes("LOGIN"),
       miniGameVisible: upper.includes("MINI GAME") || upper.includes("NHẬN LƯỢT"),
       inviteMissionVisible: upper.includes("MỜI BẠN BÈ") || upper.includes("LINK MỜI"),
       exchangeVisible: upper.includes("ĐỔI CODE"),
@@ -198,6 +244,15 @@ async function inspectPage(client) {
       buttonLabels,
     };
   })()`);
+
+  const auth = await readAuthState(client);
+  return {
+    ...page,
+    authenticated: Boolean(auth?.authenticated),
+    loginRequired: Boolean(auth?.loginRequired),
+    loginVisible: Boolean(auth?.loginVisible),
+    logoutVisible: Boolean(auth?.logoutVisible),
+  };
 }
 
 async function waitForTurnsDecrease(client, before, timeoutMs = 12000) {
@@ -399,10 +454,11 @@ class PirateLegendAutomation {
       const patch = { lastError: "" };
       if (turns !== null) patch.turns = turns;
       if (referralUrl) patch.referralUrl = referralUrl;
+      if (page.authenticated && account.status === "WAIT_LOGIN") patch.status = "READY";
       this.store.updateAccount(account.id, patch);
 
       const summary = [
-        `login=${page.loginVisible ? "yes" : "no"}`,
+        `auth=${page.authenticated ? "logged-in" : page.loginRequired ? "login-required" : "unknown"}`,
         `turns=${turns === null ? "unknown" : turns}`,
         `invite=${page.inviteMissionVisible ? "yes" : "no"}`,
         `referral=${referralUrl ? "yes" : "no"}`,

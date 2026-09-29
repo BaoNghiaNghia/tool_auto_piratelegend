@@ -511,7 +511,8 @@
         const activityAt = lastActivity(a.id) || a.updatedAt;
         const inspected = a.job?.name === "INSPECT" && a.job?.state === "DONE" ? a.job.result : null;
         const inspectInfo = inspected
-          ? '<div class="inspect-result">Inspect · login: ' + (inspected.loginVisible ? "yes" : "no") +
+          ? '<div class="inspect-result">Inspect · auth: ' +
+            (inspected.authenticated ? "logged-in" : inspected.loginRequired ? "login-required" : "unknown") +
             ' · turns: ' + (inspected.turns == null ? "unknown" : esc(inspected.turns)) +
             ' · invite: ' + (inspected.inviteMissionVisible ? "yes" : "no") +
             ' · referral: ' + (inspected.referralDetected ? "yes" : "no") + '</div>'
