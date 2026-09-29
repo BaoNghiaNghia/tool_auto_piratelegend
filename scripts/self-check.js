@@ -67,7 +67,34 @@ try {
   }
   assert(duplicateRejected, "Duplicate Chrome profile path was not rejected");
 
-  console.log("[self-check] Node, storage, validation: OK");
+  const reopened = new Store(temp);
+  assert(reopened.snapshot().schemaVersion === 1, "State schema version was not restored");
+  assert(reopened.getAccount(main2.id)?.label === "Main test 2", "Persisted account could not be reopened");
+
+  const legacyRoot = path.join(temp, "legacy");
+  fs.mkdirSync(path.join(legacyRoot, "data"), { recursive: true });
+  fs.writeFileSync(path.join(legacyRoot, "data", "state.json"), JSON.stringify({
+    accounts: [{
+      id: "legacy-sub",
+      label: "Legacy Sub",
+      role: "SUB",
+      parentMainId: "missing-main"
+    }],
+    logs: []
+  }), "utf8");
+  const legacyStore = new Store(legacyRoot);
+  assert(legacyStore.snapshot().schemaVersion === 1, "Legacy state was not migrated");
+  assert(legacyStore.getAccount("legacy-sub")?.status === "NEEDS_MAIN", "Legacy orphan SUB was not normalized");
+
+  const corruptRoot = path.join(temp, "corrupt");
+  fs.mkdirSync(path.join(corruptRoot, "data"), { recursive: true });
+  fs.writeFileSync(path.join(corruptRoot, "data", "state.json"), "{not-json", "utf8");
+  const corruptStore = new Store(corruptRoot);
+  assert(corruptStore.snapshot().accounts.length === 0, "Corrupt state did not fall back safely");
+  const backups = fs.readdirSync(path.join(corruptRoot, "data")).filter(name => name.startsWith("state.corrupt-"));
+  assert(backups.length === 1, "Corrupt state backup was not created");
+
+  console.log("[self-check] Node, UI, storage, migration, validation: OK");
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

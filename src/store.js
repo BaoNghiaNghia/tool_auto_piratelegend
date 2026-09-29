@@ -28,15 +28,52 @@ class Store {
   }
 
   #load() {
+    if (!fs.existsSync(this.file)) {
+      return { schemaVersion: 1, accounts: [], logs: [] };
+    }
+
     try {
       const raw = fs.readFileSync(this.file, "utf8");
       const parsed = JSON.parse(raw);
-      return {
-        accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
-        logs: Array.isArray(parsed.logs) ? parsed.logs : [],
-      };
+      const now = new Date().toISOString();
+
+      const accounts = (Array.isArray(parsed.accounts) ? parsed.accounts : [])
+        .filter((account) => account && typeof account.id === "string" && account.id)
+        .map((account) => ({
+          id: account.id,
+          label: String(account.label || "").trim() || "Unnamed profile",
+          role: account.role === "SUB" ? "SUB" : "MAIN",
+          profilePath: String(account.profilePath || "").trim(),
+          parentMainId: String(account.parentMainId || "").trim(),
+          referralUrl: String(account.referralUrl || "").trim(),
+          status: String(account.status || "READY"),
+          turns: Number.isFinite(account.turns) ? account.turns : null,
+          lastError: String(account.lastError || ""),
+          createdAt: account.createdAt || now,
+          updatedAt: account.updatedAt || now,
+        }));
+
+      const mainIds = new Set(accounts.filter((account) => account.role === "MAIN").map((account) => account.id));
+      for (const account of accounts) {
+        if (account.role === "MAIN") {
+          account.parentMainId = "";
+        } else if (!mainIds.has(account.parentMainId)) {
+          account.parentMainId = "";
+          account.status = "NEEDS_MAIN";
+        }
+      }
+
+      const logs = (Array.isArray(parsed.logs) ? parsed.logs : [])
+        .filter((log) => log && typeof log.id === "string" && typeof log.accountId === "string")
+        .slice(0, 500);
+
+      return { schemaVersion: 1, accounts, logs };
     } catch {
-      return { accounts: [], logs: [] };
+      try {
+        const backup = path.join(this.dataDir, `state.corrupt-${Date.now()}.json`);
+        fs.copyFileSync(this.file, backup);
+      } catch {}
+      return { schemaVersion: 1, accounts: [], logs: [] };
     }
   }
 

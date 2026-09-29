@@ -88,6 +88,10 @@ Health endpoint:
 http://127.0.0.1:3210/api/health
 ```
 
+It reports uptime, schema version, MAIN/SUB counts, active Chrome sessions, and running jobs.
+
+The local UI includes profile search and filters for MAIN, SUB, attention-required states, and currently open Chrome sessions. Each profile card shows its latest activity time and disables actions that are not valid for the current state.
+
 ## Validation
 
 Run the complete local source/self-check:
@@ -122,6 +126,8 @@ Runtime state:
 ```
 data\state.json
 ```
+
+State files use schema version 1. Older/missing fields are normalized when loaded. If `state.json` is not valid JSON, the original file is preserved as `data\state.corrupt-<timestamp>.json` and the app starts with an empty safe state.
 
 Auto-managed Chrome sessions:
 

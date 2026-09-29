@@ -16,9 +16,18 @@ const chrome = new ChromeManager(ROOT);
 const pirate = new PirateLegendAutomation(store, chrome);
 const jobs = new Map();
 
+function baseHeaders() {
+  return {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+  };
+}
+
 function json(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, {
+    ...baseHeaders(),
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(data),
     "cache-control": "no-store",
@@ -88,7 +97,7 @@ function serveStatic(req, res, pathname) {
     : ext === ".css" ? "text/css; charset=utf-8"
     : ext === ".js" ? "application/javascript; charset=utf-8"
     : "application/octet-stream";
-  res.writeHead(200, { "content-type": type });
+  res.writeHead(200, { ...baseHeaders(), "content-type": type, "cache-control": "no-cache" });
   fs.createReadStream(file).pipe(res);
   return true;
 }
@@ -104,10 +113,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && pathname === "/api/health") {
+      const snapshot = store.snapshot();
+      const runningJobs = [...jobs.values()].filter((job) => job.state === "RUNNING").length;
       return json(res, 200, {
         ok: true,
         startedAt: STARTED_AT,
-        accountCount: store.snapshot().accounts.length,
+        uptimeSeconds: Math.floor(process.uptime()),
+        schemaVersion: snapshot.schemaVersion || 1,
+        accountCount: snapshot.accounts.length,
+        mainCount: snapshot.accounts.filter((account) => account.role === "MAIN").length,
+        subCount: snapshot.accounts.filter((account) => account.role === "SUB").length,
+        chromeSessions: chrome.sessions.size,
+        runningJobs,
       });
     }
 
