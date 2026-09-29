@@ -1,6 +1,6 @@
 const http = require("node:http");
 const net = require("node:net");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -60,18 +60,33 @@ function isPortOpen(timeoutMs = 800) {
 }
 
 function openBrowser() {
-  if (process.env.PIRATELEGEND_NO_BROWSER === "1" || process.argv.includes("--no-browser")) return;
-
-  try {
-    const child = spawn(
-      "cmd.exe",
-      ["/d", "/s", "/c", `start "" "${URL}"`],
-      { detached: true, stdio: "ignore", windowsHide: true }
-    );
-    child.unref();
-  } catch {
-    // Browser auto-open is optional. The URL is always printed below.
+  if (process.env.PIRATELEGEND_NO_BROWSER === "1" || process.argv.includes("--no-browser")) {
+    return false;
   }
+
+  const attempts = [
+    ["rundll32.exe", ["url.dll,FileProtocolHandler", URL]],
+    ["explorer.exe", [URL]],
+    ["cmd.exe", ["/c", "start", "", URL]],
+  ];
+
+  for (const [command, args] of attempts) {
+    try {
+      const result = spawnSync(command, args, {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 5000,
+      });
+      if (!result.error && result.status === 0) {
+        console.log(`[PirateLegend] Opened UI in default browser: ${URL}`);
+        return true;
+      }
+    } catch {}
+  }
+
+  console.warn("[PirateLegend] Could not open the default browser automatically.");
+  console.warn(`[PirateLegend] Open this URL manually: ${URL}`);
+  return false;
 }
 
 async function waitForHealth(timeoutMs = 10_000) {
@@ -109,13 +124,30 @@ async function main() {
     windowsHide: false,
   });
 
-  const healthy = await waitForHealth();
-  if (healthy) openBrowser();
-
+  let childExit = null;
   child.on("exit", (code, signal) => {
+    childExit = { code, signal };
     if (signal) process.exitCode = 0;
     else process.exitCode = Number.isInteger(code) ? code : 1;
   });
+
+  const healthy = await waitForHealth();
+  if (!healthy) {
+    if (childExit) {
+      console.error(
+        `[PirateLegend] Server exited before it became ready` +
+        ` (code=${childExit.code ?? "unknown"}, signal=${childExit.signal ?? "none"}).`
+      );
+    } else {
+      console.error(`[PirateLegend] Server did not become healthy at ${URL} within 10 seconds.`);
+      try { child.kill(); } catch {}
+    }
+    console.error("[PirateLegend] Check the messages above, then run Start PirateLegend.bat again.");
+    process.exitCode = 1;
+    return;
+  }
+
+  openBrowser();
 
   const forwardSignal = (signal) => {
     try { child.kill(signal); } catch {}

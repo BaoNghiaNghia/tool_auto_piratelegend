@@ -163,14 +163,28 @@ or run:
 npm run build
 ```
 
-The build first runs the complete source/self-check and then creates:
+The default build runs the complete source/self-check in a temporary staging folder and leaves only one current release archive:
+
+```
+dist\PirateLegend-v<version>-win-<arch>.zip
+```
+
+Old timestamped build folders, old ZIPs, stale staging folders, and `LATEST.txt` are cleaned automatically after a successful build.
+
+For local debugging when you also want an unpacked release folder, run:
+
+```powershell
+npm run build:folder
+```
+
+That keeps only:
 
 ```
 dist\PirateLegend-v<version>-win-<arch>\
 dist\PirateLegend-v<version>-win-<arch>.zip
 ```
 
-The portable folder contains:
+The portable archive contains:
 
 - `Start PirateLegend.bat` — user-facing launcher.
 - `runtime\node.exe` — bundled Node runtime, so Node does not need to be installed on the target machine.

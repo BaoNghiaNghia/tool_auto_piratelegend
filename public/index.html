@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pirate Legend Automation</title>
+  <link rel="icon" type="image/webp" href="/piratelegend-logo.webp" />
+  <link rel="apple-touch-icon" href="/piratelegend-logo.webp" />
   <style>
     :root {
       --bg: #0b0e14;
@@ -34,10 +36,11 @@
     .top-actions {display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
     .brand { display:flex; gap:14px; align-items:center; }
     .logo {
-      width:46px;height:46px;border:1px solid #5b4721;border-radius:13px;
+      width:76px;height:52px;border:1px solid #5b4721;border-radius:13px;
       display:grid;place-items:center;background:linear-gradient(145deg,#2c2416,#16130e);
-      color:var(--accent);font-weight:900;font-size:20px;box-shadow:var(--shadow);
+      box-shadow:var(--shadow);overflow:hidden;padding:5px;
     }
+    .logo img {width:100%;height:100%;object-fit:contain;display:block;}
     h1 { font-size:22px; margin:0 0 3px; letter-spacing:-.02em; }
     .subtle { color:var(--muted); font-size:13px; }
     .btn {
@@ -163,7 +166,7 @@
   <div class="app">
     <div class="topbar">
       <div class="brand">
-        <div class="logo">PL</div>
+        <div class="logo"><img src="/piratelegend-logo.webp" alt="Pirate Legend" /></div>
         <div>
           <h1>Pirate Legend Automation</h1>
           <div class="subtle">Chrome profile manager · Flow 1 referral · Flow 2 card flip</div>

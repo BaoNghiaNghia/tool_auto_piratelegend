@@ -141,6 +141,9 @@ function serveStatic(req, res, pathname) {
   const type = ext === ".html" ? "text/html; charset=utf-8"
     : ext === ".css" ? "text/css; charset=utf-8"
     : ext === ".js" ? "application/javascript; charset=utf-8"
+    : ext === ".webp" ? "image/webp"
+    : ext === ".png" ? "image/png"
+    : ext === ".ico" ? "image/x-icon"
     : "application/octet-stream";
   res.writeHead(200, { ...baseHeaders(), "content-type": type, "cache-control": "no-cache" });
   fs.createReadStream(file).pipe(res);
