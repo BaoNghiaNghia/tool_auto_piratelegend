@@ -87,6 +87,12 @@ The launcher first checks `http://127.0.0.1:3210/api/health`:
 - If the port is free, it starts the server normally.
 - The launcher opens `http://127.0.0.1:3210` in the default browser after startup/reuse.
 
+To run a second isolated local instance on another port:
+
+```powershell
+node scripts/start-local.js --port=3221
+```
+
 For direct server-only debugging without launcher reuse logic:
 
 ```powershell
@@ -140,6 +146,49 @@ The 10 newest state backups and 10 newest activity backups are retained automati
 - Startup session recovery runs in the background in batches, so the local UI starts immediately even with many stale Chrome profiles.
 - Profile grouping/search uses indexed lookups instead of repeated O(n²) scans. The UI renders at most 300 matching profile cards at once; Search/Filter narrows larger sets.
 - The dominant resource cost at scale remains Chrome itself. Keep only profiles you actively need open and use **Close idle Chrome** to reclaim RAM.
+
+## Build Windows portable
+
+Development/source mode requires Node.js 22+, but the release build can bundle the exact Node runtime used to build it.
+
+Double-click:
+
+```
+build.bat
+```
+
+or run:
+
+```powershell
+npm run build
+```
+
+The build first runs the complete source/self-check and then creates:
+
+```
+dist\PirateLegend-v<version>-win-<arch>\
+dist\PirateLegend-v<version>-win-<arch>.zip
+```
+
+The portable folder contains:
+
+- `Start PirateLegend.bat` — user-facing launcher.
+- `runtime\node.exe` — bundled Node runtime, so Node does not need to be installed on the target machine.
+- `src\` and `public\` — application runtime files.
+- `scripts\start-local.js` — safe single-instance launcher.
+- `release-manifest.json` — version, Git commit, build time, architecture, Node version, file sizes and SHA-256 hashes.
+- `README-PORTABLE.txt` — quick start and upgrade instructions.
+
+The release intentionally does **not** include:
+
+```
+data\
+chrome-profiles\
+```
+
+This prevents local account configuration, Chrome sessions, cookies, and profile data from being copied into release artifacts. On another machine, extract the ZIP and double-click `Start PirateLegend.bat`. Google Chrome is still required.
+
+For upgrades where you want to retain local sessions, keep/copy the existing `data\` and `chrome-profiles\` directories into the new extracted release folder before starting it.
 
 ## Validation
 
@@ -206,7 +255,9 @@ src/piratelegend.js       Flow 1 / Check lượt / Flow 2 site automation
 public/index.html         Local management UI
 scripts/self-check.js     Local validation suite
 scripts/chrome-smoke.js   Chrome/CDP integration smoke test
-start.bat                 Windows launcher
+scripts/build-release.js  Windows portable release builder
+start.bat                 Windows source launcher
+build.bat                 Windows build entrypoint
 ```
 
 ## Design rules

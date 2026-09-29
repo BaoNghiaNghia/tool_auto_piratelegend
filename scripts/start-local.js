@@ -4,7 +4,11 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
-const PORT = Number(process.env.PORT || 3210);
+const portArg = process.argv.find((arg) => /^--port=\d+$/.test(arg));
+const requestedPort = portArg ? Number(portArg.split("=")[1]) : Number(process.env.PORT || 3210);
+const PORT = Number.isInteger(requestedPort) && requestedPort >= 1 && requestedPort <= 65535
+  ? requestedPort
+  : 3210;
 const HOST = "127.0.0.1";
 const URL = `http://${HOST}:${PORT}`;
 
@@ -101,7 +105,7 @@ async function main() {
   const child = spawn(process.execPath, [path.join(ROOT, "src", "server.js")], {
     cwd: ROOT,
     stdio: "inherit",
-    env: process.env,
+    env: { ...process.env, PORT: String(PORT) },
     windowsHide: false,
   });
 

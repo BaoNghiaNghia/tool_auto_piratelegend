@@ -1,5 +1,6 @@
 data/
 chrome-profiles/
+dist/
 *.log
 .DS_Store
 Thumbs.db

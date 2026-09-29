@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node scripts/start-local.js",
     "server": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check src/cdp.js && node --check src/chrome-manager.js && node --check src/piratelegend.js && node --check scripts/start-local.js && node --check scripts/self-check.js && node --check scripts/chrome-smoke.js && node --check scripts/inspect-smoke.js && node --check scripts/session-recovery-smoke.js && node scripts/self-check.js",
+    "build": "npm run check && node scripts/build-release.js",
+    "check": "node --check src/server.js && node --check src/store.js && node --check src/cdp.js && node --check src/chrome-manager.js && node --check src/piratelegend.js && node --check scripts/start-local.js && node --check scripts/build-release.js && node --check scripts/self-check.js && node --check scripts/chrome-smoke.js && node --check scripts/inspect-smoke.js && node --check scripts/session-recovery-smoke.js && node scripts/self-check.js",
     "smoke:chrome": "node scripts/chrome-smoke.js",
     "smoke:inspect": "node scripts/inspect-smoke.js",
     "smoke:recovery": "node scripts/session-recovery-smoke.js"
